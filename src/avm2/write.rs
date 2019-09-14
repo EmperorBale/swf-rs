@@ -523,15 +523,8 @@ impl<W: Write> Writer<W> {
         self.write_u30(method_body.init_scope_depth)?;
         self.write_u30(method_body.max_scope_depth)?;
 
-        let mut buf = Vec::with_capacity(method_body.code.len());
-        {
-            let mut writer = Writer::new(&mut buf);
-            for op in &method_body.code {
-                writer.write_op(op)?;
-            }
-        }
-        self.write_u30(buf.len() as u32)?;
-        self.inner.write_all(&buf)?;
+        self.write_u30(method_body.code.len() as u32)?;
+        self.inner.write_all(&method_body.code)?;
 
         self.write_u30(method_body.exceptions.len() as u32)?;
         for exception in &method_body.exceptions {

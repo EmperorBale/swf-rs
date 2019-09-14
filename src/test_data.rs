@@ -22,7 +22,7 @@ pub fn echo_swf(filename: &str) {
 pub type TestData<T> = (u8, T, Vec<u8>);
 pub type TagTestData = TestData<Tag>;
 pub type Avm1TestData = TestData<Action<'static>>;
-pub type Avm2TestData = TestData<AbcFile>;
+pub type Avm2TestData = TestData<AbcFile<'static>>;
 
 pub fn tag_tests() -> Vec<TagTestData> {
     vec![
@@ -2516,11 +2516,11 @@ pub fn avm2_tests() -> Vec<Avm2TestData> {
                 uints: vec![],
                 doubles: vec![],
                 strings: vec![
-                    "".to_string(),
-                    "void".to_string(),
-                    "Avm2Test".to_string(),
-                    "trace".to_string(),
-                    "Test".to_string(),
+                    "",
+                    "void",
+                    "Avm2Test",
+                    "trace",
+                    "Test",
                 ],
                 namespaces: vec![Namespace::Package(Index::new(1))],
                 namespace_sets: vec![],

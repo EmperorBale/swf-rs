@@ -2,22 +2,22 @@ use crate::avm2::types::*;
 use crate::read::SwfRead;
 use std::io::{Error, ErrorKind, Read, Result};
 
-pub struct Reader<R: Read> {
-    inner: R,
+pub struct Reader<'a> {
+    inner: &'a [u8],
 }
 
-impl<R: Read> SwfRead<R> for Reader<R> {
-    fn get_inner(&mut self) -> &mut R {
+impl<'a> SwfRead<&'a [u8]> for Reader<'a> {
+    fn get_inner(&mut self) -> &mut &'a [u8] {
         &mut self.inner
     }
 }
 
-impl<R: Read> Reader<R> {
-    pub fn new(inner: R) -> Reader<R> {
-        Reader { inner }
+impl<'a> Reader<'a> {
+    pub fn new(inner: &'a [u8]) -> Self {
+        Self { inner }
     }
 
-    pub fn read(&mut self) -> Result<AbcFile> {
+    pub fn read(&mut self) -> Result<AbcFile<'a>> {
         let minor_version = self.read_u16()?;
         let major_version = self.read_u16()?;
         let constant_pool = self.read_constant_pool()?;
@@ -110,14 +110,17 @@ impl<R: Read> Reader<R> {
         Ok(n)
     }
 
-    fn read_string(&mut self) -> Result<String> {
+    fn read_string(&mut self) -> Result<&'a str> {
         let len = self.read_u30()? as usize;
         let mut s = String::with_capacity(len);
         self.inner
             .by_ref()
             .take(len as u64)
             .read_to_string(&mut s)?;
-        Ok(s)
+        // TODO: What happens on invalid UTF8?
+        let str_slice = std::str::from_utf8(&self.inner[..len]).map_err(|_| Error::new(ErrorKind::InvalidData, "Invalid string data"))?;
+        self.inner = &self.inner[len..];
+        Ok(str_slice)
     }
 
     fn read_index<T>(&mut self) -> Result<Index<T>> {
@@ -125,9 +128,9 @@ impl<R: Read> Reader<R> {
         Ok(Index(self.read_u30()?, PhantomData))
     }
 
-    fn read_namespace(&mut self) -> Result<Namespace> {
+    fn read_namespace(&mut self) -> Result<Namespace<'a>> {
         let kind = self.read_u8()?;
-        let name: Index<String> = self.read_index()?;
+        let name: Index<&'a str> = self.read_index()?;
         // TODO: AVM2 specs say that "non-system" namespaces
         // should have an empty name?
         Ok(match kind {
@@ -142,7 +145,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_namespace_set(&mut self) -> Result<NamespaceSet> {
+    fn read_namespace_set(&mut self) -> Result<NamespaceSet<'a>> {
         let len = self.read_u30()? as usize;
         let mut namespace_set = vec![];
         for _ in 0..len {
@@ -151,7 +154,7 @@ impl<R: Read> Reader<R> {
         Ok(namespace_set)
     }
 
-    fn read_multiname(&mut self) -> Result<Multiname> {
+    fn read_multiname(&mut self) -> Result<Multiname<'a>> {
         let kind = self.read_u8()?;
         Ok(match kind {
             0x07 => Multiname::QName {
@@ -188,7 +191,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_constant_pool(&mut self) -> Result<ConstantPool> {
+    fn read_constant_pool(&mut self) -> Result<ConstantPool<'a>> {
         let len = self.read_u30()?;
         let mut ints = Vec::with_capacity(len as usize);
         if len > 0 {
@@ -256,7 +259,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_method(&mut self) -> Result<Method> {
+    fn read_method(&mut self) -> Result<Method<'a>> {
         let num_params = self.read_u8()? as usize;
         let return_type = self.read_index()?;
         let mut params = vec![];
@@ -296,7 +299,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_constant_value(&mut self) -> Result<DefaultValue> {
+    fn read_constant_value(&mut self) -> Result<DefaultValue<'a>> {
         let index = self.read_u30()?;
         Ok(match self.read_u8()? {
             0x00 => DefaultValue::Undefined,
@@ -318,7 +321,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_optional_value(&mut self) -> Result<Option<DefaultValue>> {
+    fn read_optional_value(&mut self) -> Result<Option<DefaultValue<'a>>> {
         let index = self.read_u30()?;
         if index == 0 {
             Ok(None)
@@ -344,7 +347,7 @@ impl<R: Read> Reader<R> {
         }
     }
 
-    fn read_metadata(&mut self) -> Result<Metadata> {
+    fn read_metadata(&mut self) -> Result<Metadata<'a>> {
         let name = self.read_index()?;
         let mut items = vec![];
         let num_items = self.read_u30()?;
@@ -357,7 +360,7 @@ impl<R: Read> Reader<R> {
         Ok(Metadata { name, items })
     }
 
-    fn read_instance(&mut self) -> Result<Instance> {
+    fn read_instance(&mut self) -> Result<Instance<'a>> {
         let name = self.read_index()?;
         let super_name = self.read_index()?;
         let flags = self.read_u8()?;
@@ -395,7 +398,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_class(&mut self) -> Result<Class> {
+    fn read_class(&mut self) -> Result<Class<'a>> {
         let init_method = self.read_index()?;
         let num_traits = self.read_u30()? as usize;
         let mut traits = Vec::with_capacity(num_traits);
@@ -408,7 +411,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_script(&mut self) -> Result<Script> {
+    fn read_script(&mut self) -> Result<Script<'a>> {
         let init_method = self.read_index()?;
         let num_traits = self.read_u30()? as usize;
         let mut traits = Vec::with_capacity(num_traits);
@@ -421,7 +424,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_trait(&mut self) -> Result<Trait> {
+    fn read_trait(&mut self) -> Result<Trait<'a>> {
         let name = self.read_index()?;
         let flags = self.read_u8()?;
         let kind = match flags & 0b1111 {
@@ -476,21 +479,16 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_method_body(&mut self) -> Result<MethodBody> {
+    fn read_method_body(&mut self) -> Result<MethodBody<'a>> {
         let method = self.read_index()?;
         let max_stack = self.read_u30()?;
         let num_locals = self.read_u30()?;
         let init_scope_depth = self.read_u30()?;
         let max_scope_depth = self.read_u30()?;
 
-        let code_len = self.read_u30()?;
-        let mut code = vec![];
-        {
-            let mut code_reader = Reader::new(self.inner.by_ref().take(code_len.into()));
-            while let Ok(Some(op)) = code_reader.read_op() {
-                code.push(op);
-            }
-        }
+        let code_len = self.read_u30()? as usize;
+        let code = &self.inner[..code_len];
+        self.inner = &self.inner[code_len..];
 
         let num_exceptions = self.read_u30()? as usize;
         let mut exceptions = Vec::with_capacity(num_exceptions);
@@ -516,7 +514,7 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_op(&mut self) -> Result<Option<Op>> {
+    fn read_op(&mut self) -> Result<Option<Op<'a>>> {
         use crate::avm2::opcode::OpCode;
         use num_traits::FromPrimitive;
 
@@ -835,7 +833,7 @@ impl<R: Read> Reader<R> {
         Ok(Some(op))
     }
 
-    fn read_exception(&mut self) -> Result<Exception> {
+    fn read_exception(&mut self) -> Result<Exception<'a>> {
         Ok(Exception {
             from_offset: self.read_u30()?,
             to_offset: self.read_u30()?,
