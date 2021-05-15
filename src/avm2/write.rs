@@ -1,21 +1,70 @@
 use crate::avm2::opcode::OpCode;
 use crate::avm2::types::*;
-use crate::write::SwfWrite;
-use std::io::{Result, Write};
+use crate::string::SwfStr;
+use crate::write::SwfWriteExt;
+use byteorder::{LittleEndian, WriteBytesExt};
+use std::io::{self, Result, Write};
 
 pub struct Writer<W: Write> {
-    inner: W,
+    output: W,
 }
 
-impl<W: Write> SwfWrite<W> for Writer<W> {
-    fn get_inner(&mut self) -> &mut W {
-        &mut self.inner
+impl<W: Write> SwfWriteExt for Writer<W> {
+    #[inline]
+    fn write_u8(&mut self, n: u8) -> io::Result<()> {
+        self.output.write_u8(n)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, n: u16) -> io::Result<()> {
+        self.output.write_u16::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, n: u32) -> io::Result<()> {
+        self.output.write_u32::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, n: u64) -> io::Result<()> {
+        self.output.write_u64::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_i8(&mut self, n: i8) -> io::Result<()> {
+        self.output.write_i8(n)
+    }
+
+    #[inline]
+    fn write_i16(&mut self, n: i16) -> io::Result<()> {
+        self.output.write_i16::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_i32(&mut self, n: i32) -> io::Result<()> {
+        self.output.write_i32::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_f32(&mut self, n: f32) -> io::Result<()> {
+        self.output.write_f32::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_f64(&mut self, n: f64) -> io::Result<()> {
+        self.output.write_f64::<LittleEndian>(n)
+    }
+
+    #[inline]
+    fn write_string(&mut self, s: &'_ SwfStr) -> io::Result<()> {
+        self.output.write_all(s.as_bytes())?;
+        self.write_u8(0)
     }
 }
 
 impl<W: Write> Writer<W> {
-    pub fn new(inner: W) -> Writer<W> {
-        Writer { inner }
+    pub fn new(output: W) -> Writer<W> {
+        Writer { output }
     }
 
     pub fn write(&mut self, abc_file: AbcFile) -> Result<()> {
@@ -75,6 +124,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn write_i24(&mut self, n: i32) -> Result<()> {
         // TODO: Verify n fits in 24-bits.
         self.write_u8(((n >> 16) & 0xff) as u8)?;
@@ -83,19 +133,8 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    fn write_i32(&mut self, mut n: i32) -> Result<()> {
-        loop {
-            let byte = (n as u8) & 0x7f;
-            n >>= 7;
-            if n != 0 && n != -1 {
-                self.write_u8(0b1_0000000 | byte)?;
-            } else {
-                self.write_u8(byte)?;
-                break;
-            }
-        }
-
-        Ok(())
+    fn write_i32(&mut self, n: i32) -> Result<()> {
+        self.write_u32(n as u32)
     }
 
     fn write_index<T>(&mut self, i: &Index<T>) -> Result<()> {
@@ -104,7 +143,7 @@ impl<W: Write> Writer<W> {
 
     fn write_string(&mut self, s: &str) -> Result<()> {
         self.write_u30(s.len() as u32)?;
-        self.inner.write_all(s.as_bytes())?;
+        self.output.write_all(s.as_bytes())?;
         Ok(())
     }
 
@@ -523,15 +562,8 @@ impl<W: Write> Writer<W> {
         self.write_u30(method_body.init_scope_depth)?;
         self.write_u30(method_body.max_scope_depth)?;
 
-        let mut buf = Vec::with_capacity(method_body.code.len());
-        {
-            let mut writer = Writer::new(&mut buf);
-            for op in &method_body.code {
-                writer.write_op(op)?;
-            }
-        }
-        self.write_u30(buf.len() as u32)?;
-        self.inner.write_all(&buf)?;
+        self.write_u30(method_body.code.len() as u32)?;
+        self.output.write_all(&method_body.code)?;
 
         self.write_u30(method_body.exceptions.len() as u32)?;
         for exception in &method_body.exceptions {
@@ -555,6 +587,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn write_op(&mut self, op: &Op) -> Result<()> {
         match *op {
             Op::Add => self.write_opcode(OpCode::Add)?,
@@ -846,6 +879,11 @@ impl<W: Write> Writer<W> {
             Op::Label => self.write_opcode(OpCode::Label)?,
             Op::LessEquals => self.write_opcode(OpCode::LessEquals)?,
             Op::LessThan => self.write_opcode(OpCode::LessThan)?,
+            Op::Lf32 => self.write_opcode(OpCode::Lf32)?,
+            Op::Lf64 => self.write_opcode(OpCode::Lf64)?,
+            Op::Li16 => self.write_opcode(OpCode::Li16)?,
+            Op::Li32 => self.write_opcode(OpCode::Li32)?,
+            Op::Li8 => self.write_opcode(OpCode::Li8)?,
             Op::LookupSwitch {
                 default_offset,
                 ref case_offsets,
@@ -912,7 +950,7 @@ impl<W: Write> Writer<W> {
             Op::PushScope => self.write_opcode(OpCode::PushScope)?,
             Op::PushShort { value } => {
                 self.write_opcode(OpCode::PushShort)?;
-                self.write_u30(value)?;
+                self.write_u30(value as u32)?;
             }
             Op::PushString { ref value } => {
                 self.write_opcode(OpCode::PushString)?;
@@ -954,10 +992,18 @@ impl<W: Write> Writer<W> {
                 self.write_opcode(OpCode::SetSuper)?;
                 self.write_index(index)?;
             }
+            Op::Sf32 => self.write_opcode(OpCode::Sf32)?,
+            Op::Sf64 => self.write_opcode(OpCode::Sf64)?,
+            Op::Si16 => self.write_opcode(OpCode::Si16)?,
+            Op::Si32 => self.write_opcode(OpCode::Si32)?,
+            Op::Si8 => self.write_opcode(OpCode::Si8)?,
             Op::StrictEquals => self.write_opcode(OpCode::StrictEquals)?,
             Op::Subtract => self.write_opcode(OpCode::Subtract)?,
             Op::SubtractI => self.write_opcode(OpCode::SubtractI)?,
             Op::Swap => self.write_opcode(OpCode::Swap)?,
+            Op::Sxi1 => self.write_opcode(OpCode::Sxi1)?,
+            Op::Sxi16 => self.write_opcode(OpCode::Sxi16)?,
+            Op::Sxi8 => self.write_opcode(OpCode::Sxi8)?,
             Op::Throw => self.write_opcode(OpCode::Throw)?,
             Op::TypeOf => self.write_opcode(OpCode::TypeOf)?,
             Op::URShift => self.write_opcode(OpCode::URShift)?,

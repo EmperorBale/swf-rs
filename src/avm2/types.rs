@@ -109,7 +109,7 @@ pub struct MethodBody {
     pub num_locals: u32,
     pub init_scope_depth: u32,
     pub max_scope_depth: u32,
-    pub code: Vec<Op>,
+    pub code: Vec<u8>,
     pub exceptions: Vec<Exception>,
     pub traits: Vec<Trait>,
 }
@@ -427,6 +427,11 @@ pub enum Op {
     Label,
     LessEquals,
     LessThan,
+    Lf32,
+    Lf64,
+    Li16,
+    Li32,
+    Li8,
     LookupSwitch {
         default_offset: i32,
         case_offsets: Vec<i32>,
@@ -476,8 +481,8 @@ pub enum Op {
     PushNull,
     PushScope,
     PushShort {
-        value: u32,
-    }, // TODO: Is this really a u30?
+        value: i16,
+    },
     PushString {
         value: Index<String>,
     },
@@ -505,10 +510,18 @@ pub enum Op {
     SetSuper {
         index: Index<Multiname>,
     },
+    Sf32,
+    Sf64,
+    Si16,
+    Si32,
+    Si8,
     StrictEquals,
     Subtract,
     SubtractI,
     Swap,
+    Sxi1,
+    Sxi16,
+    Sxi8,
     Throw,
     TypeOf,
     URShift,

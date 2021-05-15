@@ -1,16 +1,33 @@
 //! The data structures used in an Adobe SWF file.
 //!
-//! These structures are documented in the Adobe SWF File Foramt Specification
+//! These structures are documented in the Adobe SWF File Format Specification
 //! version 19 (henceforth SWF19):
 //! https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf
-use std::collections::HashSet;
+use crate::string::SwfStr;
+use bitflags::bitflags;
+
+mod fixed;
+mod matrix;
+
+pub use fixed::*;
+pub use matrix::Matrix;
 
 /// A complete header and tags in the SWF file.
 /// This is returned by the `swf::read_swf` convenience method.
 #[derive(Debug, PartialEq)]
-pub struct Swf {
+pub struct Swf<'a> {
     pub header: Header,
-    pub tags: Vec<Tag>,
+    pub tags: Vec<Tag<'a>>,
+}
+
+/// Returned by `read::decompress_swf`.
+/// Owns the decompressed SWF data, which will be referenced when parsed by `parse_swf`.
+pub struct SwfBuf {
+    /// The parsed SWF header.
+    pub header: Header,
+
+    /// The decompressed SWF tag stream.
+    pub data: Vec<u8>,
 }
 
 /// The header of an SWF file.
@@ -18,34 +35,38 @@ pub struct Swf {
 /// Notably contains the compression format used by the rest of the SWF data.
 ///
 /// [SWF19 p.27](https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf#page=27)
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Header {
-    pub version: u8,
     pub compression: Compression,
+    pub version: u8,
+    pub uncompressed_length: u32,
     pub stage_size: Rectangle,
     pub frame_rate: f32,
     pub num_frames: u16,
 }
 
-/// The compression foramt used internally by the SWF file.
+/// The compression format used internally by the SWF file.
 ///
 /// The vast majority of SWFs will use zlib compression.
 /// [SWF19 p.27](https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf#page=27)
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Compression {
     None,
     Zlib,
     Lzma,
 }
 
-/// Most coordinates in an SWF file are represented in "twips".
-/// A twip is 1/20th of a pixel.
-///
-/// `Twips` is a type-safe wrapper type documenting where Twips are used
+/// A type-safe wrapper type documenting where "twips" are used
 /// in the SWF format.
 ///
-/// Use `Twips::from_pixels` and `Twips::to_pixels` to convert to and from
+/// A twip is 1/20th of a pixel.
+/// Most coordinates in an SWF file are represented in twips.
+///
+/// Use the [`from_pixels`] and [`to_pixels`] methods to convert to and from
 /// pixel values.
+///
+/// [`from_pixels`]: Twips::from_pixels
+/// [`to_pixels`]: Twips::to_pixels
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, PartialOrd, Ord)]
 pub struct Twips(i32);
 
@@ -54,19 +75,66 @@ impl Twips {
     pub const TWIPS_PER_PIXEL: f64 = 20.0;
 
     /// Creates a new `Twips` object. Note that the `twips` value is in twips,
-    /// not pixels. Use `from_pixels` to convert from pixel units.
+    /// not pixels. Use the [`from_pixels`] method to convert from pixel units.
+    ///
+    /// [`from_pixels`]: Twips::from_pixels
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// let twips = Twips::new(40);
+    /// ```
     pub fn new<T: Into<i32>>(twips: T) -> Self {
         Self(twips.into())
     }
 
+    /// Creates a new `Twips` object with a value of `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// let twips = Twips::zero();
+    /// assert_eq!(twips.get(), 0);
+    /// ```
+    pub const fn zero() -> Self {
+        Self(0)
+    }
+
     /// Returns the number of twips.
-    pub fn get(self) -> i32 {
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// let twips = Twips::new(47);
+    /// assert_eq!(twips.get(), 47);
+    /// ```
+    pub const fn get(self) -> i32 {
         self.0
     }
 
-    /// Converts the number of pixels into twips.
+    /// Converts the given number of `pixels` into twips.
     ///
-    /// This may be a lossy conversion; any precision less than a twip (1/20 pixels) is truncated.
+    /// This may be a lossy conversion; any precision more than a twip (1/20 pixels) is truncated.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// // 40 pixels is equivalent to 800 twips.
+    /// let twips = Twips::from_pixels(40.0);
+    /// assert_eq!(twips.get(), 800);
+    ///
+    /// // Output is truncated if more precise than a twip (1/20 pixels).
+    /// let twips = Twips::from_pixels(40.018);
+    /// assert_eq!(twips.get(), 800);
+    /// ```
     pub fn from_pixels(pixels: f64) -> Self {
         Self((pixels * Self::TWIPS_PER_PIXEL) as i32)
     }
@@ -74,8 +142,38 @@ impl Twips {
     /// Converts this twips value into pixel units.
     ///
     /// This is a lossless operation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// // 800 twips is equivalent to 40 pixels.
+    /// let twips = Twips::new(800);
+    /// assert_eq!(twips.to_pixels(), 40.0);
+    ///
+    /// // Twips are sub-pixel: 713 twips represent 35.65 pixels.
+    /// let twips = Twips::new(713);
+    /// assert_eq!(twips.to_pixels(), 35.65);
+    /// ```
     pub fn to_pixels(self) -> f64 {
         f64::from(self.0) / Self::TWIPS_PER_PIXEL
+    }
+
+    /// Saturating integer subtraction. Computes `self - rhs`, saturating at the numeric bounds
+    /// of [`i32`] instead of overflowing.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Twips;
+    ///
+    /// assert_eq!(Twips::new(40).saturating_sub(Twips::new(20)), Twips::new(20));
+    /// assert_eq!(Twips::new(i32::MIN).saturating_sub(Twips::new(5)), Twips::new(i32::MIN));
+    /// assert_eq!(Twips::new(i32::MAX).saturating_sub(Twips::new(-100)), Twips::new(i32::MAX));
+    /// ```
+    pub const fn saturating_sub(self, rhs: Self) -> Self {
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -137,28 +235,102 @@ impl std::fmt::Display for Twips {
     }
 }
 
+/// A rectangular region defined by minimum
+/// and maximum x- and y-coordinate positions
+/// measured in [`Twips`].
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct Rectangle {
+    /// The minimum x-position of the rectangle.
     pub x_min: Twips,
+
+    /// The maximum x-position of the rectangle.
     pub x_max: Twips,
+
+    /// The minimum y-position of the rectangle.
     pub y_min: Twips,
+
+    /// The maximum y-position of the rectangle.
     pub y_max: Twips,
 }
 
+/// An RGBA (red, green, blue, alpha) color.
+///
+/// All components are stored as [`u8`] and have a color range of 0-255.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Color {
+    /// The red component value.
     pub r: u8,
+
+    /// The green component value.
     pub g: u8,
+
+    /// The blue component value.
     pub b: u8,
+
+    /// The alpha component value.
     pub a: u8,
+}
+
+impl Color {
+    /// Creates a `Color` from a 32-bit `rgb` value and an `alpha` value.
+    ///
+    /// The byte-ordering of the 32-bit `rgb` value is XXRRGGBB.
+    /// The most significant byte, represented by XX, is ignored;
+    /// the `alpha` value is provided separately.
+    /// This is followed by the the red (RR), green (GG), and blue (BB) components values,
+    /// respectively.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use swf::Color;
+    ///
+    /// let red = Color::from_rgb(0xFF0000, 255);
+    /// let green = Color::from_rgb(0x00FF00, 255);
+    /// let blue = Color::from_rgb(0x0000FF, 255);
+    /// ```
+    pub const fn from_rgb(rgb: u32, alpha: u8) -> Self {
+        Self {
+            r: ((rgb & 0xFF_0000) >> 16) as u8,
+            g: ((rgb & 0x00_FF00) >> 8) as u8,
+            b: (rgb & 0x00_00FF) as u8,
+            a: alpha,
+        }
+    }
+
+    /// Converts the color to a 32-bit RGB value.
+    ///
+    /// The alpha value does not get stored.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    /// ```rust
+    /// use swf::Color;
+    ///
+    /// let color = Color::from_rgb(0xFF00FF, 255);
+    /// assert_eq!(color.to_rgb(), 0xFF00FF);
+    /// ```
+    ///
+    /// Alpha values do not get stored:
+    /// ```rust
+    /// use swf::Color;
+    ///
+    /// let color1 = Color::from_rgb(0xFF00FF, 255);
+    /// let color2 = Color::from_rgb(0xFF00FF, 0);
+    /// assert_eq!(color1.to_rgb(), color2.to_rgb());
+    /// ```
+    pub const fn to_rgb(&self) -> u32 {
+        ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ColorTransform {
-    pub r_multiply: f32,
-    pub g_multiply: f32,
-    pub b_multiply: f32,
-    pub a_multiply: f32,
+    pub r_multiply: Fixed8,
+    pub g_multiply: Fixed8,
+    pub b_multiply: Fixed8,
+    pub a_multiply: Fixed8,
     pub r_add: i16,
     pub g_add: i16,
     pub b_add: i16,
@@ -166,12 +338,12 @@ pub struct ColorTransform {
 }
 
 impl ColorTransform {
-    pub fn new() -> ColorTransform {
+    pub const fn new() -> ColorTransform {
         ColorTransform {
-            r_multiply: 1f32,
-            g_multiply: 1f32,
-            b_multiply: 1f32,
-            a_multiply: 1f32,
+            r_multiply: Fixed8::ONE,
+            g_multiply: Fixed8::ONE,
+            b_multiply: Fixed8::ONE,
+            a_multiply: Fixed8::ONE,
             r_add: 0,
             g_add: 0,
             b_add: 0,
@@ -181,35 +353,6 @@ impl ColorTransform {
 }
 
 impl Default for ColorTransform {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Matrix {
-    pub translate_x: Twips,
-    pub translate_y: Twips,
-    pub scale_x: f32,
-    pub scale_y: f32,
-    pub rotate_skew_0: f32,
-    pub rotate_skew_1: f32,
-}
-
-impl Matrix {
-    pub fn new() -> Matrix {
-        Matrix {
-            translate_x: Default::default(),
-            translate_y: Default::default(),
-            scale_x: 1f32,
-            scale_y: 1f32,
-            rotate_skew_0: 0f32,
-            rotate_skew_1: 0f32,
-        }
-    }
-}
-
-impl Default for Matrix {
     fn default() -> Self {
         Self::new()
     }
@@ -235,45 +378,45 @@ pub struct FileAttributes {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct FrameLabel {
-    pub label: String,
+pub struct FrameLabel<'a> {
+    pub label: &'a SwfStr,
     pub is_anchor: bool,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct DefineSceneAndFrameLabelData {
-    pub scenes: Vec<FrameLabelData>,
-    pub frame_labels: Vec<FrameLabelData>,
+pub struct DefineSceneAndFrameLabelData<'a> {
+    pub scenes: Vec<FrameLabelData<'a>>,
+    pub frame_labels: Vec<FrameLabelData<'a>>,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct FrameLabelData {
+pub struct FrameLabelData<'a> {
     pub frame_num: u32,
-    pub label: String,
+    pub label: &'a SwfStr,
 }
 
-pub type Depth = i16;
+pub type Depth = u16;
 pub type CharacterId = u16;
 
 #[derive(Debug, PartialEq)]
-pub struct PlaceObject {
+pub struct PlaceObject<'a> {
     pub version: u8,
     pub action: PlaceObjectAction,
     pub depth: Depth,
     pub matrix: Option<Matrix>,
     pub color_transform: Option<ColorTransform>,
     pub ratio: Option<u16>,
-    pub name: Option<String>,
+    pub name: Option<&'a SwfStr>,
     pub clip_depth: Option<Depth>,
-    pub class_name: Option<String>,
-    pub filters: Vec<Filter>,
+    pub class_name: Option<&'a SwfStr>,
+    pub filters: Option<Vec<Filter>>,
     pub background_color: Option<Color>,
-    pub blend_mode: BlendMode,
-    pub clip_actions: Vec<ClipAction>,
+    pub blend_mode: Option<BlendMode>,
+    pub clip_actions: Option<Vec<ClipAction<'a>>>,
     pub is_image: bool,
-    pub is_bitmap_cached: bool,
-    pub is_visible: bool,
-    pub amf_data: Option<Vec<u8>>,
+    pub is_bitmap_cached: Option<bool>,
+    pub is_visible: Option<bool>,
+    pub amf_data: Option<&'a [u8]>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -404,37 +547,47 @@ pub enum BlendMode {
     HardLight,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ClipAction {
-    pub events: HashSet<ClipEvent>,
-    pub key_code: Option<u8>,
-    pub action_data: Vec<u8>,
+/// An clip action (a.k.a. clip event) placed on a movieclip instance.
+/// Created in the Flash IDE using `onClipEvent` or `on` blocks.
+///
+/// [SWF19 pp.37-38 ClipActionRecord](https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf#page=39)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipAction<'a> {
+    pub events: ClipEventFlag,
+    pub key_code: Option<KeyCode>,
+    pub action_data: &'a [u8],
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum ClipEvent {
-    KeyUp,
-    KeyDown,
-    MouseUp,
-    MouseDown,
-    MouseMove,
-    Unload,
-    EnterFrame,
-    Load,
-    DragOver,
-    RollOut,
-    RollOver,
-    ReleaseOutside,
-    Release,
-    Press,
-    Initialize,
-    Data,
-    Construct,
-    KeyPress,
-    DragOut,
+bitflags! {
+    /// An event that can be attached to a movieclip instance using
+    /// an `onClipEvent` or `on` block.
+    ///
+    /// [SWF19 pp.48-50 ClipEvent](https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf#page=50)
+    pub struct ClipEventFlag: u32 {
+        const CONSTRUCT       = 1 << 0;
+        const DATA            = 1 << 1;
+        const DRAG_OUT        = 1 << 2;
+        const DRAG_OVER       = 1 << 3;
+        const ENTER_FRAME     = 1 << 4;
+        const INITIALIZE      = 1 << 5;
+        const KEY_UP          = 1 << 6;
+        const KEY_DOWN        = 1 << 7;
+        const KEY_PRESS       = 1 << 8;
+        const LOAD            = 1 << 9;
+        const MOUSE_UP        = 1 << 10;
+        const MOUSE_DOWN      = 1 << 11;
+        const MOUSE_MOVE      = 1 << 12;
+        const PRESS           = 1 << 13;
+        const ROLL_OUT        = 1 << 14;
+        const ROLL_OVER       = 1 << 15;
+        const RELEASE         = 1 << 16;
+        const RELEASE_OUTSIDE = 1 << 17;
+        const UNLOAD          = 1 << 18;
+    }
 }
 
-pub type ClipEventFlags = HashSet<ClipEvent>;
+/// A key code used in `ButtonAction` and `ClipAction` key press events.
+pub type KeyCode = u8;
 
 /// Represents a tag in an SWF file.
 ///
@@ -444,52 +597,49 @@ pub type ClipEventFlags = HashSet<ClipEvent>;
 ///
 // [SWF19 p.29](https://www.adobe.com/content/dam/acom/en/devnet/pdf/swf-file-format-spec.pdf#page=29)
 #[derive(Debug, PartialEq)]
-pub enum Tag {
-    ExportAssets(Vec<ExportedAsset>),
+pub enum Tag<'a> {
+    ExportAssets(ExportAssets<'a>),
     ScriptLimits {
         max_recursion_depth: u16,
         timeout_in_seconds: u16,
     },
     ShowFrame,
 
-    Protect(Option<String>),
+    Protect(Option<&'a SwfStr>),
     CsmTextSettings(CsmTextSettings),
     DebugId(DebugId),
     DefineBinaryData {
         id: CharacterId,
-        data: Vec<u8>,
+        data: &'a [u8],
     },
     DefineBits {
         id: CharacterId,
-        jpeg_data: Vec<u8>,
+        jpeg_data: &'a [u8],
     },
     DefineBitsJpeg2 {
         id: CharacterId,
-        jpeg_data: Vec<u8>,
+        jpeg_data: &'a [u8],
     },
-    DefineBitsJpeg3(DefineBitsJpeg3),
-    DefineBitsLossless(DefineBitsLossless),
-    DefineButton(Box<Button>),
-    DefineButton2(Box<Button>),
-    DefineButtonColorTransform {
-        id: CharacterId,
-        color_transforms: Vec<ColorTransform>,
-    },
+    DefineBitsJpeg3(DefineBitsJpeg3<'a>),
+    DefineBitsLossless(DefineBitsLossless<'a>),
+    DefineButton(Box<Button<'a>>),
+    DefineButton2(Box<Button<'a>>),
+    DefineButtonColorTransform(ButtonColorTransform),
     DefineButtonSound(Box<ButtonSounds>),
-    DefineEditText(Box<EditText>),
+    DefineEditText(Box<EditText<'a>>),
     DefineFont(Box<FontV1>),
-    DefineFont2(Box<Font>),
-    DefineFont4(Font4),
+    DefineFont2(Box<Font<'a>>),
+    DefineFont4(Font4<'a>),
     DefineFontAlignZones {
         id: CharacterId,
         thickness: FontThickness,
         zones: Vec<FontAlignZone>,
     },
-    DefineFontInfo(Box<FontInfo>),
+    DefineFontInfo(Box<FontInfo<'a>>),
     DefineFontName {
         id: CharacterId,
-        name: String,
-        copyright_info: String,
+        name: &'a SwfStr,
+        copyright_info: &'a SwfStr,
     },
     DefineMorphShape(Box<DefineMorphShape>),
     DefineScalingGrid {
@@ -497,61 +647,63 @@ pub enum Tag {
         splitter_rect: Rectangle,
     },
     DefineShape(Shape),
-    DefineSound(Box<Sound>),
-    DefineSprite(Sprite),
+    DefineSound(Box<Sound<'a>>),
+    DefineSprite(Sprite<'a>),
     DefineText(Box<Text>),
     DefineVideoStream(DefineVideoStream),
-    DoAbc(DoAbc),
-    DoAction(DoAction),
+    DoAbc(DoAbc<'a>),
+    DoAction(DoAction<'a>),
     DoInitAction {
         id: CharacterId,
-        action_data: Vec<u8>,
+        action_data: &'a [u8],
     },
-    EnableDebugger(String),
+    EnableDebugger(&'a SwfStr),
     EnableTelemetry {
-        password_hash: Vec<u8>,
+        password_hash: &'a [u8],
     },
     End,
-    Metadata(String),
+    Metadata(&'a SwfStr),
     ImportAssets {
-        url: String,
-        imports: Vec<ExportedAsset>,
+        url: &'a SwfStr,
+        imports: Vec<ExportedAsset<'a>>,
     },
-    JpegTables(JpegTables),
+    JpegTables(JpegTables<'a>),
     SetBackgroundColor(SetBackgroundColor),
     SetTabIndex {
         depth: Depth,
         tab_index: u16,
     },
-    SoundStreamBlock(SoundStreamBlock),
+    SoundStreamBlock(SoundStreamBlock<'a>),
     SoundStreamHead(Box<SoundStreamHead>),
     SoundStreamHead2(Box<SoundStreamHead>),
     StartSound(StartSound),
     StartSound2 {
-        class_name: String,
+        class_name: &'a SwfStr,
         sound_info: Box<SoundInfo>,
     },
-    SymbolClass(Vec<SymbolClassLink>),
-    PlaceObject(Box<PlaceObject>),
+    SymbolClass(Vec<SymbolClassLink<'a>>),
+    PlaceObject(Box<PlaceObject<'a>>),
     RemoveObject(RemoveObject),
-    VideoFrame(VideoFrame),
+    VideoFrame(VideoFrame<'a>),
     FileAttributes(FileAttributes),
 
-    FrameLabel(FrameLabel),
-    DefineSceneAndFrameLabelData(DefineSceneAndFrameLabelData),
+    FrameLabel(FrameLabel<'a>),
+    DefineSceneAndFrameLabelData(DefineSceneAndFrameLabelData<'a>),
 
     ProductInfo(ProductInfo),
 
     Unknown {
         tag_code: u16,
-        data: Vec<u8>,
+        data: &'a [u8],
     },
 }
 
+pub type ExportAssets<'a> = Vec<ExportedAsset<'a>>;
+
 #[derive(Debug, PartialEq, Clone)]
-pub struct ExportedAsset {
+pub struct ExportedAsset<'a> {
     pub id: CharacterId,
-    pub name: String,
+    pub name: &'a SwfStr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -563,12 +715,20 @@ pub struct RemoveObject {
 pub type SetBackgroundColor = Color;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SymbolClassLink {
+pub struct SymbolClassLink<'a> {
     pub id: CharacterId,
-    pub class_name: String,
+    pub class_name: &'a SwfStr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+pub struct ShapeContext {
+    pub swf_version: u8,
+    pub shape_version: u8,
+    pub num_fill_bits: u8,
+    pub num_line_bits: u8,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Shape {
     pub version: u8,
     pub id: CharacterId,
@@ -582,11 +742,11 @@ pub struct Shape {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Sound {
+pub struct Sound<'a> {
     pub id: CharacterId,
     pub format: SoundFormat,
     pub num_samples: u32,
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -621,10 +781,10 @@ pub struct StartSound {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Sprite {
+pub struct Sprite<'a> {
     pub id: CharacterId,
     pub num_frames: u16,
-    pub tags: Vec<Tag>,
+    pub tags: Vec<Tag<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -691,8 +851,8 @@ pub enum GradientSpread {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum GradientInterpolation {
-    RGB,
-    LinearRGB,
+    Rgb,
+    LinearRgb,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -716,7 +876,7 @@ pub struct LineStyle {
 }
 
 impl LineStyle {
-    pub fn new_v1(width: Twips, color: Color) -> LineStyle {
+    pub const fn new_v1(width: Twips, color: Color) -> LineStyle {
         LineStyle {
             width,
             color,
@@ -774,19 +934,19 @@ pub struct SoundStreamHead {
     pub latency_seek: i16,
 }
 
-pub type SoundStreamBlock = Vec<u8>;
+pub type SoundStreamBlock<'a> = &'a [u8];
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Button {
+pub struct Button<'a> {
     pub id: CharacterId,
     pub is_track_as_menu: bool,
     pub records: Vec<ButtonRecord>,
-    pub actions: Vec<ButtonAction>,
+    pub actions: Vec<ButtonAction<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ButtonRecord {
-    pub states: HashSet<ButtonState>,
+    pub states: ButtonState,
     pub id: CharacterId,
     pub depth: Depth,
     pub matrix: Matrix,
@@ -795,12 +955,19 @@ pub struct ButtonRecord {
     pub blend_mode: BlendMode,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum ButtonState {
-    Up,
-    Over,
-    Down,
-    HitTest,
+bitflags! {
+    pub struct ButtonState: u8 {
+        const UP       = 1 << 0;
+        const OVER     = 1 << 1;
+        const DOWN     = 1 << 2;
+        const HIT_TEST = 1 << 3;
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ButtonColorTransform {
+    pub id: CharacterId,
+    pub color_transforms: Vec<ColorTransform>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -815,24 +982,25 @@ pub struct ButtonSounds {
 pub type ButtonSound = (CharacterId, SoundInfo);
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct ButtonAction {
-    pub conditions: HashSet<ButtonActionCondition>,
+pub struct ButtonAction<'a> {
+    pub conditions: ButtonActionCondition,
     pub key_code: Option<u8>,
-    pub action_data: Vec<u8>,
+    pub action_data: &'a [u8],
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum ButtonActionCondition {
-    IdleToOverDown,
-    OutDownToIdle,
-    OutDownToOverDown,
-    OverDownToOutDown,
-    OverDownToOverUp,
-    OverUpToOverDown,
-    OverUpToIdle,
-    IdleToOverUp,
-    OverDownToIdle,
-    KeyPress,
+bitflags! {
+    pub struct ButtonActionCondition: u16 {
+        const IDLE_TO_OVER_UP       = 1 << 0;
+        const OVER_UP_TO_IDLE       = 1 << 1;
+        const OVER_UP_TO_OVER_DOWN  = 1 << 2;
+        const OVER_DOWN_TO_OVER_UP  = 1 << 3;
+        const OVER_DOWN_TO_OUT_DOWN = 1 << 4;
+        const OUT_DOWN_TO_OVER_DOWN = 1 << 5;
+        const OUT_DOWN_TO_IDLE      = 1 << 6;
+        const IDLE_TO_OVER_DOWN     = 1 << 7;
+        const OVER_DOWN_TO_IDLE     = 1 << 8;
+        const KEY_PRESS             = 1 << 9;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -861,10 +1029,10 @@ pub struct FontV1 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Font {
+pub struct Font<'a> {
     pub version: u8,
     pub id: CharacterId,
-    pub name: String,
+    pub name: &'a SwfStr,
     pub language: Language,
     pub layout: Option<FontLayout>,
     pub glyphs: Vec<Glyph>,
@@ -876,12 +1044,12 @@ pub struct Font {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Font4 {
+pub struct Font4<'a> {
     pub id: CharacterId,
     pub is_italic: bool,
     pub is_bold: bool,
-    pub name: String,
-    pub data: Option<Vec<u8>>,
+    pub name: &'a SwfStr,
+    pub data: Option<&'a [u8]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -908,10 +1076,10 @@ pub struct KerningRecord {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FontInfo {
+pub struct FontInfo<'a> {
     pub id: CharacterId,
     pub version: u8,
-    pub name: String,
+    pub name: &'a SwfStr,
     pub is_small_text: bool,
     pub is_shift_jis: bool,
     pub is_ansi: bool,
@@ -935,7 +1103,7 @@ pub struct TextRecord {
     pub color: Option<Color>,
     pub x_offset: Option<Twips>,
     pub y_offset: Option<Twips>,
-    pub height: Option<u16>,
+    pub height: Option<Twips>,
     pub glyphs: Vec<GlyphEntry>,
 }
 
@@ -946,17 +1114,17 @@ pub struct GlyphEntry {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct EditText {
+pub struct EditText<'a> {
     pub id: CharacterId,
     pub bounds: Rectangle,
     pub font_id: Option<CharacterId>, // TODO(Herschel): Combine with height
-    pub font_class_name: Option<String>,
-    pub height: Option<u16>,
+    pub font_class_name: Option<&'a SwfStr>,
+    pub height: Option<Twips>,
     pub color: Option<Color>,
     pub max_length: Option<u16>,
     pub layout: Option<TextLayout>,
-    pub variable_name: String,
-    pub initial_text: Option<String>,
+    pub variable_name: &'a SwfStr,
+    pub initial_text: Option<&'a SwfStr>,
     pub is_word_wrap: bool,
     pub is_multiline: bool,
     pub is_password: bool,
@@ -1019,14 +1187,14 @@ pub enum TextGridFit {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DefineBitsLossless {
+pub struct DefineBitsLossless<'a> {
     pub version: u8,
     pub id: CharacterId,
     pub format: BitmapFormat,
     pub width: u16,
     pub height: u16,
     pub num_colors: u8,
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1061,36 +1229,37 @@ pub enum VideoDeblocking {
 pub enum VideoCodec {
     H263,
     ScreenVideo,
-    VP6,
-    VP6WithAlpha,
+    Vp6,
+    Vp6WithAlpha,
+    ScreenVideoV2,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct VideoFrame {
+pub struct VideoFrame<'a> {
     pub stream_id: CharacterId,
     pub frame_num: u16,
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DefineBitsJpeg3 {
+pub struct DefineBitsJpeg3<'a> {
     pub id: CharacterId,
     pub version: u8,
     pub deblocking: f32,
-    pub data: Vec<u8>,
-    pub alpha_data: Vec<u8>,
+    pub data: &'a [u8],
+    pub alpha_data: &'a [u8],
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DoAbc {
-    pub name: String,
+pub struct DoAbc<'a> {
+    pub name: &'a SwfStr,
     pub is_lazy_initialize: bool,
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
 }
 
-pub type DoAction = Vec<u8>;
+pub type DoAction<'a> = &'a [u8];
 
-pub type JpegTables = Vec<u8>;
+pub type JpegTables<'a> = &'a [u8];
 
 /// `ProductInfo` contains information about the software used to generate the SWF.
 /// Not documented in the SWF19 reference. Emitted by mxmlc.

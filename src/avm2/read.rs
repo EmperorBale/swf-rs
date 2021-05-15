@@ -1,20 +1,32 @@
 use crate::avm2::types::*;
-use crate::read::SwfRead;
-use std::io::{Error, ErrorKind, Read, Result};
+use crate::error::{Error, Result};
+use crate::extensions::ReadSwfExt;
+use std::io::Read;
 
-pub struct Reader<R: Read> {
-    inner: R,
+pub struct Reader<'a> {
+    input: &'a [u8],
 }
 
-impl<R: Read> SwfRead<R> for Reader<R> {
-    fn get_inner(&mut self) -> &mut R {
-        &mut self.inner
+impl<'a> ReadSwfExt<'a> for Reader<'a> {
+    #[inline(always)]
+    fn as_mut_slice(&mut self) -> &mut &'a [u8] {
+        &mut self.input
+    }
+
+    #[inline(always)]
+    fn as_slice(&self) -> &'a [u8] {
+        &self.input
     }
 }
 
-impl<R: Read> Reader<R> {
-    pub fn new(inner: R) -> Reader<R> {
-        Reader { inner }
+impl<'a> Reader<'a> {
+    pub fn new(input: &'a [u8]) -> Self {
+        Self { input }
+    }
+
+    #[inline]
+    pub fn seek(&mut self, data: &'a [u8], relative_offset: i32) {
+        ReadSwfExt::seek(self, data, relative_offset as isize)
     }
 
     pub fn read(&mut self) -> Result<AbcFile> {
@@ -72,48 +84,23 @@ impl<R: Read> Reader<R> {
     }
 
     fn read_u30(&mut self) -> Result<u32> {
-        let mut n = 0;
-        let mut i = 0;
-        loop {
-            let byte: u32 = self.read_u8()?.into();
-            n |= (byte & 0b0111_1111) << i;
-            i += 7;
-            if byte & 0b1000_0000 == 0 {
-                break;
-            }
-        }
-        Ok(n)
-    }
-
-    fn read_u32(&mut self) -> Result<u32> {
-        self.read_u30()
+        self.read_encoded_u32()
     }
 
     fn read_i24(&mut self) -> Result<i32> {
-        Ok(i32::from(self.read_u8()?)
-            | (i32::from(self.read_u8()?) << 8)
-            | (i32::from(self.read_u8()?) << 16))
+        Ok(i32::from(self.read_u8()? as i8)
+            | (i32::from(self.read_u8()? as i8) << 8)
+            | (i32::from(self.read_u8()? as i8) << 16))
     }
+
     fn read_i32(&mut self) -> Result<i32> {
-        let mut n: i32 = 0;
-        let mut i = 0;
-        loop {
-            let byte: i32 = self.read_u8()?.into();
-            n |= (byte & 0b0111_1111) << i;
-            i += 7;
-            if byte & 0b1000_0000 == 0 {
-                n <<= 32 - i;
-                n >>= 32 - i;
-                break;
-            }
-        }
-        Ok(n)
+        Ok(self.read_encoded_u32()? as i32)
     }
 
     fn read_string(&mut self) -> Result<String> {
         let len = self.read_u30()? as usize;
         let mut s = String::with_capacity(len);
-        self.inner
+        self.input
             .by_ref()
             .take(len as u64)
             .read_to_string(&mut s)?;
@@ -138,7 +125,7 @@ impl<R: Read> Reader<R> {
             0x18 => Namespace::Protected(name),
             0x19 => Namespace::Explicit(name),
             0x1a => Namespace::StaticProtected(name),
-            _ => return Err(Error::new(ErrorKind::InvalidData, "Invalid namespace kind")),
+            _ => return Err(Error::invalid_data("Invalid namespace kind")),
         })
     }
 
@@ -184,7 +171,7 @@ impl<R: Read> Reader<R> {
             0x1c => Multiname::MultinameLA {
                 namespace_set: self.read_index()?,
             },
-            _ => return Err(Error::new(ErrorKind::InvalidData, "Invalid multiname kind")),
+            _ => return Err(Error::invalid_data("Invalid multiname kind")),
         })
     }
 
@@ -201,7 +188,7 @@ impl<R: Read> Reader<R> {
         let mut uints = Vec::with_capacity(len as usize);
         if len > 0 {
             for _ in 0..len - 1 {
-                uints.push(self.read_u32()?);
+                uints.push(self.read_u30()?);
             }
         }
 
@@ -314,7 +301,7 @@ impl<R: Read> Reader<R> {
             0x18 => DefaultValue::Protected(Index::new(index)),
             0x19 => DefaultValue::Explicit(Index::new(index)),
             0x1a => DefaultValue::StaticProtected(Index::new(index)),
-            _ => return Err(Error::new(ErrorKind::InvalidData, "Invalid default value")),
+            _ => return Err(Error::invalid_data("Invalid default value")),
         })
     }
 
@@ -339,7 +326,7 @@ impl<R: Read> Reader<R> {
                 0x18 => DefaultValue::Protected(Index::new(index)),
                 0x19 => DefaultValue::Explicit(Index::new(index)),
                 0x1a => DefaultValue::StaticProtected(Index::new(index)),
-                _ => return Err(Error::new(ErrorKind::InvalidData, "Invalid default value")),
+                _ => return Err(Error::invalid_data("Invalid default value")),
             }))
         }
     }
@@ -455,7 +442,7 @@ impl<R: Read> Reader<R> {
                 type_name: self.read_index()?,
                 value: self.read_optional_value()?,
             },
-            _ => return Err(Error::new(ErrorKind::InvalidData, "Invalid trait kind")),
+            _ => return Err(Error::invalid_data("Invalid trait kind")),
         };
 
         let mut metadata = vec![];
@@ -483,14 +470,13 @@ impl<R: Read> Reader<R> {
         let init_scope_depth = self.read_u30()?;
         let max_scope_depth = self.read_u30()?;
 
+        // Read the code data.
         let code_len = self.read_u30()?;
-        let mut code = vec![];
-        {
-            let mut code_reader = Reader::new(self.inner.by_ref().take(code_len.into()));
-            while let Ok(Some(op)) = code_reader.read_op() {
-                code.push(op);
-            }
-        }
+        let mut code = Vec::with_capacity(code_len as usize);
+        self.input
+            .by_ref()
+            .take(code_len.into())
+            .read_to_end(&mut code)?;
 
         let num_exceptions = self.read_u30()? as usize;
         let mut exceptions = Vec::with_capacity(num_exceptions);
@@ -516,13 +502,19 @@ impl<R: Read> Reader<R> {
         })
     }
 
-    fn read_op(&mut self) -> Result<Option<Op>> {
+    pub fn read_op(&mut self) -> Result<Option<Op>> {
         use crate::avm2::opcode::OpCode;
         use num_traits::FromPrimitive;
 
-        let opcode = match OpCode::from_u8(self.read_u8()?) {
+        let byte = self.read_u8()?;
+        let opcode = match OpCode::from_u8(byte) {
             Some(o) => o,
-            None => return Err(Error::new(ErrorKind::InvalidData, "Invalid opcode")),
+            None => {
+                return Err(Error::invalid_data(format!(
+                    "Unknown ABC opcode {:#x}",
+                    byte
+                )))
+            }
         };
 
         let op = match opcode {
@@ -734,6 +726,11 @@ impl<R: Read> Reader<R> {
             OpCode::Label => Op::Label,
             OpCode::LessEquals => Op::LessEquals,
             OpCode::LessThan => Op::LessThan,
+            OpCode::Lf32 => Op::Lf32,
+            OpCode::Lf64 => Op::Lf64,
+            OpCode::Li16 => Op::Li16,
+            OpCode::Li32 => Op::Li32,
+            OpCode::Li8 => Op::Li8,
             OpCode::LookupSwitch => Op::LookupSwitch {
                 default_offset: self.read_i24()?,
                 case_offsets: {
@@ -790,7 +787,7 @@ impl<R: Read> Reader<R> {
             OpCode::PushNull => Op::PushNull,
             OpCode::PushScope => Op::PushScope,
             OpCode::PushShort => Op::PushShort {
-                value: self.read_u30()?,
+                value: self.read_u30()? as i16,
             },
             OpCode::PushString => Op::PushString {
                 value: self.read_index()?,
@@ -823,10 +820,18 @@ impl<R: Read> Reader<R> {
             OpCode::SetSuper => Op::SetSuper {
                 index: self.read_index()?,
             },
+            OpCode::Sf32 => Op::Sf32,
+            OpCode::Sf64 => Op::Sf64,
+            OpCode::Si16 => Op::Si16,
+            OpCode::Si32 => Op::Si32,
+            OpCode::Si8 => Op::Si8,
             OpCode::StrictEquals => Op::StrictEquals,
             OpCode::Subtract => Op::Subtract,
             OpCode::SubtractI => Op::SubtractI,
             OpCode::Swap => Op::Swap,
+            OpCode::Sxi1 => Op::Sxi1,
+            OpCode::Sxi16 => Op::Sxi16,
+            OpCode::Sxi8 => Op::Sxi8,
             OpCode::Throw => Op::Throw,
             OpCode::TypeOf => Op::TypeOf,
             OpCode::URShift => Op::URShift,
@@ -853,15 +858,12 @@ pub mod tests {
 
     pub fn read_abc_from_file(path: &str) -> Vec<u8> {
         use crate::types::Tag;
-        use std::fs::File;
-
-        let mut file = File::open(path).unwrap();
-        let mut data = Vec::new();
-        file.read_to_end(&mut data).unwrap();
-        let swf = crate::read_swf(&data[..]).unwrap();
+        let data = std::fs::read(path).unwrap();
+        let swf_buf = crate::decompress_swf(&data[..]).unwrap();
+        let swf = crate::parse_swf(&swf_buf).unwrap();
         for tag in swf.tags {
             if let Tag::DoAbc(do_abc) = tag {
-                return do_abc.data;
+                return do_abc.data.to_vec();
             }
         }
         panic!("ABC tag not found in {}", path);
@@ -880,5 +882,155 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn read_u30() {
+        let read = |data: &[u8]| Reader::new(data).read_u30().unwrap();
+        assert_eq!(read(&[0]), 0);
+        assert_eq!(read(&[2]), 2);
+        assert_eq!(read(&[0b1_0000001, 0b0_0000001]), 129);
+        assert_eq!(
+            read(&[0b1_0000001, 0b1_0000001, 0b0_1100111]),
+            0b1100111_0000001_0000001
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b0000_1111
+            ]),
+            0b1111_0000000_0000000_0000000_0000000
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1111_1111
+            ]),
+            0b1111_0000000_0000000_0000000_0000000
+        );
+    }
+
+    #[test]
+    fn read_i32() {
+        let read = |data: &[u8]| Reader::new(data).read_i32().unwrap();
+        assert_eq!(read(&[0]), 0);
+        assert_eq!(read(&[2]), 2);
+        assert_eq!(read(&[0b1_0000001, 0b0_0000001]), 129);
+        assert_eq!(
+            read(&[
+                0b1_0000001,
+                0b1_0000001,
+                0b1_0000001,
+                0b1_0000001,
+                0b0000_0100
+            ]),
+            1075855489
+        );
+
+        // Note that the value is NOT sign-extended, unlike what the AVM2 spec suggests.
+        // Negatives must take up the full 5 bytes.
+        assert_eq!(read(&[0b0_1000000]), 64);
+        assert_eq!(read(&[0b1_0000000, 0b0_1000000]), 8192);
+        assert_eq!(read(&[0b1_0000000, 0b1_0000000, 0b0_1000000]), 1048576);
+        assert_eq!(
+            read(&[0b1_0000000, 0b1_0000000, 0b1_0000000, 0b0_1000000]),
+            134217728
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b0000_0100
+            ]),
+            1073741824
+        );
+        assert_eq!(
+            read(&[
+                0b1_1111111,
+                0b1_1111111,
+                0b1_1111111,
+                0b1_1111111,
+                0b0000_0111
+            ]),
+            2147483647
+        );
+
+        assert_eq!(
+            read(&[
+                0b1_1000000,
+                0b1_1111111,
+                0b1_1111111,
+                0b1_1111111,
+                0b0000_1111,
+            ]),
+            -64
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_1000000,
+                0b1_1111111,
+                0b1_1111111,
+                0b0000_1111
+            ]),
+            -8192
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_1000000,
+                0b1_1111111,
+                0b0000_1111
+            ]),
+            -1048576
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1_1000000,
+                0b0000_1111
+            ]),
+            -134217728
+        );
+        assert_eq!(
+            read(&[
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b1_0000000,
+                0b0000_1000
+            ]),
+            -2147483648
+        );
+
+        assert_eq!(read(&[0b1_0000100, 0b1_0000111, 0b0_0000100,]), 66436);
+
+        assert_eq!(
+            read(&[0b1_0000100, 0b1_0000111, 0b1_0000000, 0b0_1111111,]),
+            266339204
+        );
+
+        // Final 4 bytes of a 5-byte value are unimportant.
+        assert_eq!(
+            read(&[
+                0b1_0000100,
+                0b1_0000100,
+                0b1_0000100,
+                0b1_0000100,
+                0b1111_0111
+            ]),
+            1887502852
+        );
     }
 }

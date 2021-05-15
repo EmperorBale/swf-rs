@@ -3,8 +3,9 @@
 use crate::avm1::types::*;
 use crate::avm2::read::tests::read_abc_from_file;
 use crate::avm2::types::*;
-use crate::read::read_swf;
 use crate::read::tests::{read_tag_bytes_from_file, read_tag_bytes_from_file_with_index};
+use crate::read::{decompress_swf, parse_swf};
+use crate::string::{SwfStr, WINDOWS_1252};
 use crate::tag_code::TagCode;
 use crate::types::*;
 use crate::write::write_swf;
@@ -13,15 +14,16 @@ use std::vec::Vec;
 
 #[allow(dead_code)]
 pub fn echo_swf(filename: &str) {
-    let in_file = File::open(filename).unwrap();
-    let swf = read_swf(in_file).unwrap();
+    let in_data = std::fs::read(filename).unwrap();
+    let swf_buf = decompress_swf(&in_data[..]).unwrap();
+    let swf = parse_swf(&swf_buf).unwrap();
     let out_file = File::create(filename).unwrap();
     write_swf(&swf, out_file).unwrap();
 }
 
 pub type TestData<T> = (u8, T, Vec<u8>);
-pub type TagTestData = TestData<Tag>;
-pub type Avm1TestData = TestData<Action>;
+pub type TagTestData = TestData<Tag<'static>>;
+pub type Avm1TestData = TestData<Action<'static>>;
 pub type Avm2TestData = TestData<AbcFile>;
 
 pub fn tag_tests() -> Vec<TagTestData> {
@@ -41,7 +43,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             9, // Minimum version not listed in SWF19.
             Tag::DefineBinaryData {
                 id: 1,
-                data: vec![84, 101, 115, 116, 105, 110, 103, 33],
+                data: &[84, 101, 115, 116, 105, 110, 103, 33],
             },
             read_tag_bytes_from_file("tests/swfs/DefineBinaryData.swf", TagCode::DefineBinaryData),
         ),
@@ -49,7 +51,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             1,
             Tag::DefineBits {
                 id: 1,
-                jpeg_data: vec![
+                jpeg_data: &[
                     255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255,
                     192, 0, 17, 8, 0, 5, 0, 6, 3, 1, 34, 0, 2, 17, 1, 3, 17, 1, 255, 218, 0, 12, 3,
                     1, 0, 2, 17, 3, 17, 0, 63, 0, 252, 215, 162, 138, 43, 248, 28, 255, 0, 180, 3,
@@ -65,7 +67,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             1,
             Tag::DefineBitsJpeg2 {
                 id: 1,
-                jpeg_data: vec![
+                jpeg_data: &[
                     255, 216, 255, 219, 0, 67, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 255, 219, 0,
@@ -111,7 +113,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 id: 1,
                 version: 3,
                 deblocking: 0.0,
-                data: vec![
+                data: &[
                     255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255,
                     219, 0, 67, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -125,7 +127,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     255, 196, 0, 20, 17, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255,
                     218, 0, 12, 3, 1, 0, 2, 17, 3, 17, 0, 63, 0, 134, 240, 23, 224, 94, 255, 217,
                 ],
-                alpha_data: vec![120, 218, 107, 104, 160, 12, 0, 0, 16, 124, 32, 1],
+                alpha_data: &[120, 218, 107, 104, 160, 12, 0, 0, 16, 124, 32, 1],
             }),
             read_tag_bytes_from_file("tests/swfs/DefineBitsJpeg3.swf", TagCode::DefineBitsJpeg3),
         ),
@@ -164,7 +166,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 width: 8,
                 height: 8,
                 num_colors: 0,
-                data: vec![
+                data: &[
                     120, 218, 251, 207, 192, 240, 255, 255, 8, 198, 0, 4, 128, 127, 129,
                 ],
             }),
@@ -182,7 +184,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 width: 8,
                 height: 8,
                 num_colors: 0,
-                data: vec![
+                data: &[
                     120, 218, 107, 96, 96, 168, 107, 24, 193, 24, 0, 227, 81, 63, 129,
                 ],
             }),
@@ -199,33 +201,27 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 records: vec![
                     ButtonRecord {
                         id: 1,
-                        states: vec![ButtonState::Up, ButtonState::Over]
-                            .into_iter()
-                            .collect(),
+                        states: ButtonState::UP | ButtonState::OVER,
                         depth: 1,
-                        matrix: Matrix::new(),
+                        matrix: Matrix::identity(),
                         color_transform: ColorTransform::new(),
                         filters: vec![],
                         blend_mode: BlendMode::Normal,
                     },
                     ButtonRecord {
                         id: 2,
-                        states: vec![ButtonState::Down, ButtonState::HitTest]
-                            .into_iter()
-                            .collect(),
+                        states: ButtonState::DOWN | ButtonState::HIT_TEST,
                         depth: 1,
-                        matrix: Matrix::new(),
+                        matrix: Matrix::identity(),
                         color_transform: ColorTransform::new(),
                         filters: vec![],
                         blend_mode: BlendMode::Normal,
                     },
                 ],
                 actions: vec![ButtonAction {
-                    conditions: vec![ButtonActionCondition::OverDownToOverUp]
-                        .into_iter()
-                        .collect(),
+                    conditions: ButtonActionCondition::OVER_DOWN_TO_OVER_UP,
                     key_code: None,
-                    action_data: vec![0],
+                    action_data: &[0],
                 }],
             })),
             read_tag_bytes_from_file("tests/swfs/DefineButton-MX.swf", TagCode::DefineButton),
@@ -238,20 +234,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 records: vec![
                     ButtonRecord {
                         id: 2,
-                        states: vec![ButtonState::Up, ButtonState::Over]
-                            .into_iter()
-                            .collect(),
+                        states: ButtonState::UP | ButtonState::OVER,
                         depth: 1,
-                        matrix: Matrix::new(),
+                        matrix: Matrix::identity(),
                         color_transform: ColorTransform {
-                            r_multiply: 1f32,
-                            g_multiply: 1f32,
-                            b_multiply: 1f32,
-                            a_multiply: 1f32,
                             r_add: 200,
                             g_add: 0,
                             b_add: 0,
                             a_add: 0,
+                            ..Default::default()
                         },
                         filters: vec![Filter::BlurFilter(Box::new(BlurFilter {
                             blur_x: 5f64,
@@ -262,16 +253,14 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     },
                     ButtonRecord {
                         id: 3,
-                        states: vec![ButtonState::Down, ButtonState::HitTest]
-                            .into_iter()
-                            .collect(),
+                        states: ButtonState::DOWN | ButtonState::HIT_TEST,
                         depth: 1,
-                        matrix: Matrix::new(),
+                        matrix: Matrix::identity(),
                         color_transform: ColorTransform {
-                            r_multiply: 0f32,
-                            g_multiply: 1f32,
-                            b_multiply: 0f32,
-                            a_multiply: 1f32,
+                            r_multiply: 0.into(),
+                            g_multiply: 1.into(),
+                            b_multiply: 0.into(),
+                            a_multiply: 1.into(),
                             r_add: 0,
                             g_add: 0,
                             b_add: 0,
@@ -283,16 +272,14 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 ],
                 actions: vec![
                     ButtonAction {
-                        conditions: vec![ButtonActionCondition::OverDownToOverUp]
-                            .into_iter()
-                            .collect(),
+                        conditions: ButtonActionCondition::OVER_DOWN_TO_OVER_UP,
                         key_code: None,
-                        action_data: vec![150, 3, 0, 0, 65, 0, 38, 0], // trace("A");
+                        action_data: &[150, 3, 0, 0, 65, 0, 38, 0], // trace("A");
                     },
                     ButtonAction {
-                        conditions: vec![ButtonActionCondition::KeyPress].into_iter().collect(),
-                        key_code: Some(3),                             // Home
-                        action_data: vec![150, 3, 0, 0, 66, 0, 38, 0], // trace("B");
+                        conditions: ButtonActionCondition::KEY_PRESS,
+                        key_code: Some(3),                          // Home
+                        action_data: &[150, 3, 0, 0, 66, 0, 38, 0], // trace("B");
                     },
                 ],
             })),
@@ -300,41 +287,41 @@ pub fn tag_tests() -> Vec<TagTestData> {
         ),
         (
             2,
-            Tag::DefineButtonColorTransform {
+            Tag::DefineButtonColorTransform(ButtonColorTransform {
                 id: 3,
                 color_transforms: vec![
                     ColorTransform {
-                        r_multiply: 1f32,
-                        g_multiply: 0f32,
-                        b_multiply: 0f32,
-                        a_multiply: 1f32,
+                        r_multiply: 1.into(),
+                        g_multiply: 0.into(),
+                        b_multiply: 0.into(),
+                        a_multiply: 1.into(),
                         r_add: 1,
                         g_add: 0,
                         b_add: 0,
                         a_add: 0,
                     },
                     ColorTransform {
-                        r_multiply: 0f32,
-                        g_multiply: 1f32,
-                        b_multiply: 0f32,
-                        a_multiply: 1f32,
+                        r_multiply: 0.into(),
+                        g_multiply: 1.into(),
+                        b_multiply: 0.into(),
+                        a_multiply: 1.into(),
                         r_add: 0,
                         g_add: 1,
                         b_add: 0,
                         a_add: 0,
                     },
                     ColorTransform {
-                        r_multiply: 0f32,
-                        g_multiply: 0f32,
-                        b_multiply: 1f32,
-                        a_multiply: 1f32,
+                        r_multiply: 0.into(),
+                        g_multiply: 0.into(),
+                        b_multiply: 1.into(),
+                        a_multiply: 1.into(),
                         r_add: 0,
                         g_add: 0,
                         b_add: 1,
                         a_add: 0,
                     },
                 ],
-            },
+            }),
             read_tag_bytes_from_file(
                 "tests/swfs/DefineButtonCxformSound-MX.swf",
                 TagCode::DefineButtonCxform,
@@ -384,7 +371,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 },
                 font_id: Some(1),
                 font_class_name: None,
-                height: Some(360),
+                height: Some(Twips::from_pixels(18.0)),
                 color: Some(Color {
                     r: 0,
                     g: 255,
@@ -399,8 +386,8 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     indent: Twips::from_pixels(1.0),
                     leading: Twips::from_pixels(2.0),
                 }),
-                variable_name: "foo".to_string(),
-                initial_text: Some("-_-".to_string()),
+                variable_name: SwfStr::from_str_with_encoding("foo", WINDOWS_1252).unwrap(),
+                initial_text: Some(SwfStr::from_str_with_encoding("-_-", WINDOWS_1252).unwrap()),
                 is_word_wrap: false,
                 is_multiline: true,
                 is_password: false,
@@ -473,6 +460,8 @@ pub fn tag_tests() -> Vec<TagTestData> {
             })),
             read_tag_bytes_from_file("tests/swfs/DefineFont-MX.swf", TagCode::DefineFont),
         ),
+        /* TODO: Commented out because Flash MX wrote this file with a CodeTableOffset, but we don't.
+         *
         (
             3,
             Tag::DefineFont2(Box::new(Font {
@@ -490,6 +479,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             })),
             read_tag_bytes_from_file("tests/swfs/DefineEditText-MX.swf", TagCode::DefineFont2),
         ),
+        */
         /* TODO(Herschel): Flash writes out zero rectangles with 1-bit,
          * Causing this test to fail.
         (
@@ -615,6 +605,28 @@ pub fn tag_tests() -> Vec<TagTestData> {
             read_tag_bytes_from_file("tests/swfs/DefineFont3-CS55.swf", TagCode::DefineFont3)
         ),
         */
+        /* Commented out because font name has a trailing null byte in the SWF.
+         (
+            11,
+            Tag::DefineFont2(Box::new(Font {
+                version: 3,
+                id: 1,
+                name: "_sans",
+                is_small_text: false,
+                is_ansi: false,
+                is_shift_jis: false,
+                is_italic: false,
+                is_bold: false,
+                language: Language::Latin,
+                layout: None,
+                glyphs: vec![],
+            })),
+            read_tag_bytes_from_file(
+                "tests/swfs/DefineFont3-DeviceText.swf",
+                TagCode::DefineFont3,
+            ),
+        ),
+        */
         (
             8,
             Tag::DefineFontAlignZones {
@@ -644,7 +656,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             10,
             Tag::DefineFont4(Font4 {
                 id: 1,
-                name: "Dummy".to_string(),
+                name: "Dummy".into(),
                 is_italic: false,
                 is_bold: false,
                 data: None,
@@ -656,7 +668,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             Tag::DefineFontInfo(Box::new(FontInfo {
                 id: 1,
                 version: 1,
-                name: "Verdana".to_string(),
+                name: SwfStr::from_str_with_encoding("Verdana", WINDOWS_1252).unwrap(),
                 is_small_text: false,
                 is_ansi: true,
                 is_shift_jis: false,
@@ -672,7 +684,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             Tag::DefineFontInfo(Box::new(FontInfo {
                 id: 1,
                 version: 2,
-                name: "Verdana".to_string(),
+                name: "Verdana".into(),
                 is_small_text: false,
                 is_ansi: true,
                 is_shift_jis: false,
@@ -687,8 +699,8 @@ pub fn tag_tests() -> Vec<TagTestData> {
             9,
             Tag::DefineFontName {
                 id: 2,
-                name: "Dummy".to_string(),
-                copyright_info: "Dummy font for swf-rs tests".to_string(),
+                name: "Dummy".into(),
+                copyright_info: "Dummy font for swf-rs tests".into(),
             },
             read_tag_bytes_from_file("tests/swfs/DefineFont4.swf", TagCode::DefineFontName),
         ),
@@ -714,15 +726,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     },
                     fill_styles: vec![FillStyle::LinearGradient(Gradient {
                         matrix: Matrix {
-                            translate_x: Twips::from_pixels(40.0),
-                            translate_y: Twips::from_pixels(40.0),
-                            scale_x: 0.024429321,
-                            scale_y: 0.024429321,
-                            rotate_skew_0: 0.024429321,
-                            rotate_skew_1: -0.024429321,
+                            tx: Twips::from_pixels(40.0),
+                            ty: Twips::from_pixels(40.0),
+                            a: 0.024429321,
+                            d: 0.024429321,
+                            b: 0.024429321,
+                            c: -0.024429321,
                         },
                         spread: GradientSpread::Pad,
-                        interpolation: GradientInterpolation::RGB,
+                        interpolation: GradientInterpolation::Rgb,
                         records: vec![
                             GradientRecord {
                                 ratio: 0,
@@ -817,15 +829,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     },
                     fill_styles: vec![FillStyle::LinearGradient(Gradient {
                         matrix: Matrix {
-                            translate_x: Twips::from_pixels(48.4),
-                            translate_y: Twips::from_pixels(34.65),
-                            scale_x: 0.0058898926,
-                            scale_y: 0.030914307,
-                            rotate_skew_0: 0.0,
-                            rotate_skew_1: 0.0,
+                            tx: Twips::from_pixels(48.4),
+                            ty: Twips::from_pixels(34.65),
+                            a: 0.0058898926,
+                            d: 0.030914307,
+                            b: 0.0,
+                            c: 0.0,
                         },
                         spread: GradientSpread::Pad,
-                        interpolation: GradientInterpolation::RGB,
+                        interpolation: GradientInterpolation::Rgb,
                         records: vec![
                             GradientRecord {
                                 ratio: 56,
@@ -935,15 +947,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     fill_styles: vec![FillStyle::FocalGradient {
                         gradient: Gradient {
                             matrix: Matrix {
-                                translate_x: Twips::from_pixels(116.05),
-                                translate_y: Twips::from_pixels(135.05),
-                                scale_x: 0.11468506,
-                                scale_y: 0.18927002,
-                                rotate_skew_0: 0.0,
-                                rotate_skew_1: 0.0,
+                                tx: Twips::from_pixels(116.05),
+                                ty: Twips::from_pixels(135.05),
+                                a: 0.11468506,
+                                d: 0.18927002,
+                                b: 0.0,
+                                c: 0.0,
                             },
                             spread: GradientSpread::Pad,
-                            interpolation: GradientInterpolation::RGB,
+                            interpolation: GradientInterpolation::Rgb,
                             records: vec![
                                 GradientRecord {
                                     ratio: 0,
@@ -1058,15 +1070,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     fill_styles: vec![FillStyle::FocalGradient {
                         gradient: Gradient {
                             matrix: Matrix {
-                                translate_x: Twips::from_pixels(164.0),
-                                translate_y: Twips::from_pixels(150.05),
-                                scale_x: 0.036087036,
-                                scale_y: 0.041992188,
-                                rotate_skew_0: 0.1347351,
-                                rotate_skew_1: -0.15675354,
+                                tx: Twips::from_pixels(164.0),
+                                ty: Twips::from_pixels(150.05),
+                                a: 0.036087036,
+                                d: 0.041992188,
+                                b: 0.1347351,
+                                c: -0.15675354,
                             },
                             spread: GradientSpread::Pad,
-                            interpolation: GradientInterpolation::RGB,
+                            interpolation: GradientInterpolation::Rgb,
                             records: vec![
                                 GradientRecord {
                                     ratio: 0,
@@ -1173,6 +1185,188 @@ pub fn tag_tests() -> Vec<TagTestData> {
             ),
         ),
         (
+            11,
+            Tag::DefineMorphShape(Box::new(DefineMorphShape {
+                version: 2,
+                id: 1,
+                has_non_scaling_strokes: false,
+                has_scaling_strokes: true,
+                start: MorphShape {
+                    shape_bounds: Rectangle {
+                        x_min: Twips::from_pixels(0.0),
+                        x_max: Twips::from_pixels(200.0),
+                        y_min: Twips::from_pixels(0.0),
+                        y_max: Twips::from_pixels(200.0),
+                    },
+                    edge_bounds: Rectangle {
+                        x_min: Twips::from_pixels(0.0),
+                        x_max: Twips::from_pixels(200.0),
+                        y_min: Twips::from_pixels(0.0),
+                        y_max: Twips::from_pixels(200.0),
+                    },
+                    fill_styles: vec![FillStyle::RadialGradient(Gradient {
+                        matrix: Matrix {
+                            tx: Twips::from_pixels(100.00),
+                            ty: Twips::from_pixels(100.00),
+                            a: 0.1725769,
+                            d: 0.1725769,
+                            b: 0.0,
+                            c: 0.0,
+                        },
+                        spread: GradientSpread::Reflect,
+                        interpolation: GradientInterpolation::LinearRgb,
+                        records: vec![
+                            GradientRecord {
+                                ratio: 0,
+                                color: Color {
+                                    r: 255,
+                                    g: 0,
+                                    b: 0,
+                                    a: 255,
+                                },
+                            },
+                            GradientRecord {
+                                ratio: 255,
+                                color: Color {
+                                    r: 0,
+                                    g: 0,
+                                    b: 0,
+                                    a: 255,
+                                },
+                            },
+                        ],
+                    })],
+                    line_styles: vec![LineStyle {
+                        width: Twips::from_pixels(0.0),
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 0,
+                        },
+                        start_cap: LineCapStyle::Round,
+                        end_cap: LineCapStyle::Round,
+                        join_style: LineJoinStyle::Round,
+                        fill_style: None,
+                        allow_scale_x: true,
+                        allow_scale_y: true,
+                        is_pixel_hinted: false,
+                        allow_close: true,
+                    }],
+                    shape: vec![
+                        ShapeRecord::StyleChange(StyleChangeData {
+                            move_to: None,
+                            fill_style_0: Some(1),
+                            fill_style_1: None,
+                            line_style: Some(1),
+                            new_styles: None,
+                        }),
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(200.0),
+                            delta_y: Twips::from_pixels(0.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(0.0),
+                            delta_y: Twips::from_pixels(200.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(-200.0),
+                            delta_y: Twips::from_pixels(0.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(0.0),
+                            delta_y: Twips::from_pixels(-200.0),
+                        },
+                    ],
+                },
+                end: MorphShape {
+                    shape_bounds: Rectangle {
+                        x_min: Twips::from_pixels(0.0),
+                        x_max: Twips::from_pixels(200.0),
+                        y_min: Twips::from_pixels(0.0),
+                        y_max: Twips::from_pixels(200.0),
+                    },
+                    edge_bounds: Rectangle {
+                        x_min: Twips::from_pixels(0.0),
+                        x_max: Twips::from_pixels(200.0),
+                        y_min: Twips::from_pixels(0.0),
+                        y_max: Twips::from_pixels(200.0),
+                    },
+                    fill_styles: vec![FillStyle::RadialGradient(Gradient {
+                        matrix: Matrix {
+                            tx: Twips::from_pixels(100.00),
+                            ty: Twips::from_pixels(100.00),
+                            a: 0.000015258789,
+                            d: 0.000015258789,
+                            b: 0.084503174,
+                            c: -0.084503174,
+                        },
+                        spread: GradientSpread::Reflect,
+                        interpolation: GradientInterpolation::LinearRgb,
+                        records: vec![
+                            GradientRecord {
+                                ratio: 0,
+                                color: Color {
+                                    r: 255,
+                                    g: 0,
+                                    b: 0,
+                                    a: 255,
+                                },
+                            },
+                            GradientRecord {
+                                ratio: 255,
+                                color: Color {
+                                    r: 0,
+                                    g: 0,
+                                    b: 0,
+                                    a: 255,
+                                },
+                            },
+                        ],
+                    })],
+                    line_styles: vec![LineStyle {
+                        width: Twips::from_pixels(0.0),
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 0,
+                        },
+                        start_cap: LineCapStyle::Round,
+                        end_cap: LineCapStyle::Round,
+                        join_style: LineJoinStyle::Round,
+                        fill_style: None,
+                        allow_scale_x: true,
+                        allow_scale_y: true,
+                        is_pixel_hinted: false,
+                        allow_close: true,
+                    }],
+                    shape: vec![
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(200.0),
+                            delta_y: Twips::from_pixels(0.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(0.0),
+                            delta_y: Twips::from_pixels(200.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(-200.0),
+                            delta_y: Twips::from_pixels(0.0),
+                        },
+                        ShapeRecord::StraightEdge {
+                            delta_x: Twips::from_pixels(0.0),
+                            delta_y: Twips::from_pixels(-200.0),
+                        },
+                    ],
+                },
+            })),
+            read_tag_bytes_from_file(
+                "tests/swfs/DefineMorphShape2-GradientFlags.swf",
+                TagCode::DefineMorphShape2,
+            ),
+        ),
+        (
             8,
             Tag::DefineScalingGrid {
                 id: 2,
@@ -1189,38 +1383,38 @@ pub fn tag_tests() -> Vec<TagTestData> {
             ),
         ),
         (
-            1, // Minimum version not listed in SWF19.
+            9, // Minimum version not listed in SWF19.
             Tag::DefineSceneAndFrameLabelData(DefineSceneAndFrameLabelData {
                 scenes: vec![
                     FrameLabelData {
                         frame_num: 0,
-                        label: "Scene 1".to_string(),
+                        label: "Scene 1".into(),
                     },
                     FrameLabelData {
                         frame_num: 25,
-                        label: "Scene2Scene2Scene2Scene2Scene2".to_string(),
+                        label: "Scene2Scene2Scene2Scene2Scene2".into(),
                     },
                     FrameLabelData {
                         frame_num: 26,
-                        label: "test日本語test".to_string(),
+                        label: "test日本語test".into(),
                     },
                 ],
                 frame_labels: vec![
                     FrameLabelData {
                         frame_num: 0,
-                        label: "a".to_string(),
+                        label: "a".into(),
                     },
                     FrameLabelData {
                         frame_num: 9,
-                        label: "b".to_string(),
+                        label: "b".into(),
                     },
                     FrameLabelData {
                         frame_num: 17,
-                        label: "❤😁aaa".to_string(),
+                        label: "❤😁aaa".into(),
                     },
                     FrameLabelData {
                         frame_num: 25,
-                        label: "frameInScene2".to_string(),
+                        label: "frameInScene2".into(),
                     },
                 ],
             }),
@@ -1309,15 +1503,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 styles: ShapeStyles {
                     fill_styles: vec![FillStyle::RadialGradient(Gradient {
                         matrix: Matrix {
-                            translate_x: Twips::from_pixels(24.95),
-                            translate_y: Twips::from_pixels(24.95),
-                            scale_x: 0.030731201f32,
-                            scale_y: 0.030731201f32,
-                            rotate_skew_0: 0f32,
-                            rotate_skew_1: 0f32,
+                            tx: Twips::from_pixels(24.95),
+                            ty: Twips::from_pixels(24.95),
+                            a: 0.030731201f32,
+                            d: 0.030731201f32,
+                            b: 0f32,
+                            c: 0f32,
                         },
                         spread: GradientSpread::Pad,
-                        interpolation: GradientInterpolation::RGB,
+                        interpolation: GradientInterpolation::Rgb,
                         records: vec![
                             GradientRecord {
                                 ratio: 0,
@@ -1399,7 +1593,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     },
                 ],
             }),
-            read_tag_bytes_from_file("tests/swfs/defineshape3.swf", TagCode::DefineShape3),
+            read_tag_bytes_from_file("tests/swfs/DefineShape3.swf", TagCode::DefineShape3),
         ),
         (
             8,
@@ -1432,15 +1626,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                         FillStyle::FocalGradient {
                             gradient: Gradient {
                                 matrix: Matrix {
-                                    translate_x: Twips::from_pixels(49.55),
-                                    translate_y: Twips::from_pixels(46.55),
-                                    scale_x: 0.06199646f32,
-                                    scale_y: 0.06199646f32,
-                                    rotate_skew_0: 0f32,
-                                    rotate_skew_1: 0f32,
+                                    tx: Twips::from_pixels(49.55),
+                                    ty: Twips::from_pixels(46.55),
+                                    a: 0.06199646f32,
+                                    d: 0.06199646f32,
+                                    b: 0f32,
+                                    c: 0f32,
                                 },
                                 spread: GradientSpread::Pad,
-                                interpolation: GradientInterpolation::LinearRGB,
+                                interpolation: GradientInterpolation::LinearRgb,
                                 records: vec![
                                     GradientRecord {
                                         ratio: 0,
@@ -1496,15 +1690,15 @@ pub fn tag_tests() -> Vec<TagTestData> {
                             join_style: LineJoinStyle::Round,
                             fill_style: Some(FillStyle::LinearGradient(Gradient {
                                 matrix: Matrix {
-                                    translate_x: Twips::from_pixels(50.0),
-                                    translate_y: Twips::from_pixels(50.0),
-                                    scale_x: 0.07324219f32,
-                                    scale_y: 0.07324219f32,
-                                    rotate_skew_0: 0f32,
-                                    rotate_skew_1: 0f32,
+                                    tx: Twips::from_pixels(50.0),
+                                    ty: Twips::from_pixels(50.0),
+                                    a: 0.07324219f32,
+                                    d: 0.07324219f32,
+                                    b: 0f32,
+                                    c: 0f32,
                                 },
                                 spread: GradientSpread::Pad,
-                                interpolation: GradientInterpolation::RGB,
+                                interpolation: GradientInterpolation::Rgb,
                                 records: vec![
                                     GradientRecord {
                                         ratio: 0,
@@ -1651,7 +1845,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     is_stereo: false,
                 },
                 num_samples: 10,
-                data: vec![
+                data: &[
                     255, 127, 0, 128, 255, 127, 0, 128, 255, 127, 0, 128, 255, 127, 0, 128, 255,
                     127, 0, 128,
                 ],
@@ -1683,7 +1877,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     y_min: Twips::from_pixels(4.1),
                     y_max: Twips::from_pixels(18.45),
                 },
-                matrix: Matrix::new(),
+                matrix: Matrix::identity(),
                 records: vec![TextRecord {
                     font_id: Some(1),
                     color: Some(Color {
@@ -1694,7 +1888,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
                     }),
                     x_offset: None,
                     y_offset: Some(Twips::from_pixels(16.1)),
-                    height: Some(320),
+                    height: Some(Twips::from_pixels(16.0)),
                     glyphs: vec![
                         GlyphEntry {
                             index: 0,
@@ -1731,7 +1925,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
         ),
         (
             5,
-            Tag::DoAction(vec![
+            Tag::DoAction(&[
                 150, 10, 0, 0, 84, 101, 115, 116, 105, 110, 103, 33, 0, 38, 0,
             ]),
             read_tag_bytes_from_file("tests/swfs/DoAction-CS6.swf", TagCode::DoAction),
@@ -1740,13 +1934,13 @@ pub fn tag_tests() -> Vec<TagTestData> {
             6,
             Tag::DoInitAction {
                 id: 2,
-                action_data: vec![150, 6, 0, 0, 116, 101, 115, 116, 0, 38, 0],
+                action_data: &[150, 6, 0, 0, 116, 101, 115, 116, 0, 38, 0],
             },
             read_tag_bytes_from_file("tests/swfs/DoInitAction-CS6.swf", TagCode::DoInitAction),
         ),
         (
             6,
-            Tag::EnableDebugger("$1$ve$EG3LE6bumvJ2pR8F5qXny/".to_string()),
+            Tag::EnableDebugger("$1$ve$EG3LE6bumvJ2pR8F5qXny/".into()),
             read_tag_bytes_from_file(
                 "tests/swfs/EnableDebugger2-CS6.swf",
                 TagCode::EnableDebugger2,
@@ -1754,15 +1948,13 @@ pub fn tag_tests() -> Vec<TagTestData> {
         ),
         (
             10,
-            Tag::EnableTelemetry {
-                password_hash: vec![],
-            },
+            Tag::EnableTelemetry { password_hash: &[] },
             read_tag_bytes_from_file("tests/swfs/EnableTelemetry.swf", TagCode::EnableTelemetry),
         ),
         (
             10,
             Tag::EnableTelemetry {
-                password_hash: vec![
+                password_hash: &[
                     207, 128, 205, 138, 237, 72, 45, 93, 21, 39, 215, 220, 114, 252, 239, 248, 78,
                     99, 38, 89, 40, 72, 68, 125, 45, 192, 176, 232, 125, 252, 154, 144,
                 ],
@@ -1776,7 +1968,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             6,
             Tag::ExportAssets(vec![ExportedAsset {
                 id: 2,
-                name: "Test💯".to_string(),
+                name: "Test💯".into(),
             }]),
             read_tag_bytes_from_file("tests/swfs/ExportAssets-CS6.swf", TagCode::ExportAssets),
         ),
@@ -1794,7 +1986,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
         (
             3,
             Tag::FrameLabel(FrameLabel {
-                label: "test".to_string(),
+                label: SwfStr::from_str_with_encoding("test", WINDOWS_1252).unwrap(),
                 is_anchor: false,
             }),
             read_tag_bytes_from_file_with_index(
@@ -1806,7 +1998,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
         (
             6, // Anchor tags supported in SWF version 6 and later.
             Tag::FrameLabel(FrameLabel {
-                label: "anchor_tag".to_string(),
+                label: "anchor_tag".into(),
                 is_anchor: true,
             }),
             read_tag_bytes_from_file_with_index(
@@ -1818,10 +2010,10 @@ pub fn tag_tests() -> Vec<TagTestData> {
         (
             7,
             Tag::ImportAssets {
-                url: "ExportAssets-CS6.swf".to_string(),
+                url: "ExportAssets-CS6.swf".into(),
                 imports: vec![ExportedAsset {
                     id: 1,
-                    name: "Test💯".to_string(),
+                    name: "Test💯".into(),
                 }],
             },
             read_tag_bytes_from_file("tests/swfs/ImportAssets-CS6.swf", TagCode::ImportAssets),
@@ -1829,17 +2021,17 @@ pub fn tag_tests() -> Vec<TagTestData> {
         (
             8,
             Tag::ImportAssets {
-                url: "ExportAssets-CS6.swf".to_string(),
+                url: "ExportAssets-CS6.swf".into(),
                 imports: vec![ExportedAsset {
                     id: 1,
-                    name: "Test💯".to_string(),
+                    name: "Test💯".into(),
                 }],
             },
             read_tag_bytes_from_file("tests/swfs/ImportAssets2-CS6.swf", TagCode::ImportAssets2),
         ),
         (
             1,
-            Tag::JpegTables(vec![
+            Tag::JpegTables(&[
                 255, 216, 255, 219, 0, 67, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 255, 219, 0, 67, 1, 1, 1, 1,
@@ -1876,7 +2068,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
         ),
         (
             1,
-            Tag::Metadata("aa!".to_string()),
+            Tag::Metadata(SwfStr::from_str_with_encoding("aa!", WINDOWS_1252).unwrap()),
             vec![0b01_000100, 0b000_10011, b'a', b'a', b'!', 0],
         ),
         (
@@ -1885,22 +2077,52 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 version: 2,
                 action: PlaceObjectAction::Place(1),
                 depth: 1,
-                matrix: Some(Matrix::new()),
+                matrix: Some(Matrix::identity()),
                 color_transform: None,
                 ratio: None,
                 name: None,
                 clip_depth: None,
                 class_name: None,
-                filters: vec![],
+                filters: None,
                 background_color: None,
-                blend_mode: BlendMode::Normal,
-                clip_actions: vec![],
+                blend_mode: None,
+                clip_actions: None,
                 is_image: false,
-                is_bitmap_cached: false,
-                is_visible: true,
+                is_bitmap_cached: None,
+                is_visible: None,
                 amf_data: None,
             })),
             read_tag_bytes_from_file("tests/swfs/DefineShape.swf", TagCode::PlaceObject2),
+        ),
+        (
+            5, // Specifically test for SWFv5 ClipActions.
+            Tag::PlaceObject(Box::new(PlaceObject {
+                version: 2,
+                action: PlaceObjectAction::Place(2),
+                depth: 1,
+                matrix: Some(Matrix::identity()),
+                color_transform: None,
+                ratio: None,
+                name: None,
+                clip_depth: None,
+                class_name: None,
+                filters: None,
+                background_color: None,
+                blend_mode: None,
+                clip_actions: Some(vec![ClipAction {
+                    events: ClipEventFlag::ENTER_FRAME,
+                    key_code: None,
+                    action_data: &[150, 6, 0, 0, 99, 108, 105, 112, 0, 38, 0],
+                }]),
+                is_image: false,
+                is_bitmap_cached: None,
+                is_visible: None,
+                amf_data: None,
+            })),
+            read_tag_bytes_from_file(
+                "tests/swfs/PlaceObject2-ClipActionsV5-CS6.swf",
+                TagCode::PlaceObject2,
+            ),
         ),
         (
             6, // ClipActions added in SWF version 5-6.
@@ -1908,37 +2130,35 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 version: 2,
                 action: PlaceObjectAction::Place(2),
                 depth: 1,
-                matrix: Some(Matrix::new()),
+                matrix: Some(Matrix::identity()),
                 color_transform: None,
                 ratio: None,
                 name: None,
                 clip_depth: None,
                 class_name: None,
-                filters: vec![],
+                filters: None,
                 background_color: None,
-                blend_mode: BlendMode::Normal,
-                clip_actions: vec![
+                blend_mode: None,
+                clip_actions: Some(vec![
                     ClipAction {
-                        events: vec![ClipEvent::Press, ClipEvent::Release]
-                            .into_iter()
-                            .collect(),
+                        events: ClipEventFlag::PRESS | ClipEventFlag::RELEASE,
                         key_code: None,
-                        action_data: vec![150, 3, 0, 0, 65, 0, 38, 0],
+                        action_data: &[150, 3, 0, 0, 65, 0, 38, 0],
                     },
                     ClipAction {
-                        events: vec![ClipEvent::KeyPress].into_iter().collect(),
+                        events: ClipEventFlag::KEY_PRESS,
                         key_code: Some(99),
-                        action_data: vec![150, 3, 0, 0, 66, 0, 38, 0],
+                        action_data: &[150, 3, 0, 0, 66, 0, 38, 0],
                     },
                     ClipAction {
-                        events: vec![ClipEvent::EnterFrame].into_iter().collect(),
+                        events: ClipEventFlag::ENTER_FRAME,
                         key_code: None,
-                        action_data: vec![150, 3, 0, 0, 67, 0, 38, 0],
+                        action_data: &[150, 3, 0, 0, 67, 0, 38, 0],
                     },
-                ],
+                ]),
                 is_image: false,
-                is_bitmap_cached: false,
-                is_visible: true,
+                is_bitmap_cached: None,
+                is_visible: None,
                 amf_data: None,
             })),
             read_tag_bytes_from_file(
@@ -1947,34 +2167,64 @@ pub fn tag_tests() -> Vec<TagTestData> {
             ),
         ),
         (
+            11,
+            Tag::PlaceObject(Box::new(PlaceObject {
+                version: 3,
+                action: PlaceObjectAction::Place(1),
+                depth: 1,
+                matrix: Some(Matrix {
+                    tx: Twips::from_pixels(0.0),
+                    ty: Twips::from_pixels(0.0),
+                    b: 0f32,
+                    c: 0f32,
+                    a: 1.0f32,
+                    d: 1.0f32,
+                }),
+                color_transform: None,
+                ratio: None,
+                name: None,
+                clip_depth: None,
+                class_name: None,
+                filters: None,
+                background_color: None,
+                blend_mode: None,
+                clip_actions: None,
+                is_image: true,
+                is_bitmap_cached: None,
+                is_visible: None,
+                amf_data: None,
+            })),
+            read_tag_bytes_from_file("tests/swfs/PlaceObject3-Image.swf", TagCode::PlaceObject3),
+        ),
+        (
             8,
             Tag::PlaceObject(Box::new(PlaceObject {
                 version: 3,
                 action: PlaceObjectAction::Place(2),
                 depth: 1,
                 matrix: Some(Matrix {
-                    translate_x: Twips::from_pixels(10.0),
-                    translate_y: Twips::from_pixels(10.0),
-                    rotate_skew_0: 0f32,
-                    rotate_skew_1: 0f32,
-                    scale_x: 2.0f32,
-                    scale_y: 2.0f32,
+                    tx: Twips::from_pixels(10.0),
+                    ty: Twips::from_pixels(10.0),
+                    b: 0f32,
+                    c: 0f32,
+                    a: 2.0f32,
+                    d: 2.0f32,
                 }),
                 color_transform: Some(ColorTransform {
-                    a_multiply: 1.0f32,
+                    a_multiply: Fixed8::from_f32(1.0),
                     a_add: 80,
-                    r_multiply: 0.5f32,
+                    r_multiply: Fixed8::from_f32(0.5),
                     r_add: 60,
-                    g_multiply: 0.25f32,
+                    g_multiply: Fixed8::from_f32(0.25),
                     g_add: 40,
-                    b_multiply: 0.75f32,
+                    b_multiply: Fixed8::from_f32(0.75),
                     b_add: 20,
                 }),
                 ratio: None,
-                name: Some("test".to_string()),
+                name: Some("test".into()),
                 clip_depth: None,
                 class_name: None,
-                filters: vec![
+                filters: Some(vec![
                     Filter::GradientBevelFilter(Box::new(GradientBevelFilter {
                         colors: vec![
                             GradientRecord {
@@ -2051,31 +2301,29 @@ pub fn tag_tests() -> Vec<TagTestData> {
                         blur_y: 20f64,
                         num_passes: 2,
                     })),
-                ],
+                ]),
                 background_color: Some(Color {
                     r: 255,
                     g: 0,
                     b: 0,
                     a: 255,
                 }),
-                blend_mode: BlendMode::Difference,
-                clip_actions: vec![
+                blend_mode: Some(BlendMode::Difference),
+                clip_actions: Some(vec![
                     ClipAction {
-                        events: vec![ClipEvent::ReleaseOutside, ClipEvent::RollOver]
-                            .into_iter()
-                            .collect(),
+                        events: ClipEventFlag::RELEASE_OUTSIDE | ClipEventFlag::ROLL_OVER,
                         key_code: None,
-                        action_data: vec![0],
+                        action_data: &[0],
                     },
                     ClipAction {
-                        events: vec![ClipEvent::Data].into_iter().collect(),
+                        events: ClipEventFlag::DATA,
                         key_code: None,
-                        action_data: vec![150, 3, 0, 0, 66, 0, 38, 0],
+                        action_data: &[150, 3, 0, 0, 66, 0, 38, 0],
                     },
-                ],
+                ]),
                 is_image: false,
-                is_bitmap_cached: true,
-                is_visible: false,
+                is_bitmap_cached: Some(true),
+                is_visible: Some(false),
                 amf_data: None,
             })),
             read_tag_bytes_from_file(
@@ -2091,26 +2339,26 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 action: PlaceObjectAction::Place(2),
                 depth: 1,
                 matrix: Some(Matrix {
-                    translate_x: Twips::from_pixels(10.0),
-                    translate_y: Twips::from_pixels(10.0),
-                    rotate_skew_0: 0.0,
-                    rotate_skew_1: 0.0,
-                    scale_x: 1.0,
-                    scale_y: 1.0,
+                    tx: Twips::from_pixels(10.0),
+                    ty: Twips::from_pixels(10.0),
+                    b: 0.0,
+                    c: 0.0,
+                    a: 1.0,
+                    d: 1.0,
                 }),
                 color_transform: None,
                 ratio: None,
                 name: None,
                 clip_depth: None,
                 class_name: None,
-                filters: vec![],
+                filters: None,
                 background_color: None,
-                blend_mode: BlendMode::Normal,
-                clip_actions: vec![],
+                blend_mode: None,
+                clip_actions: None,
                 is_image: false,
-                is_bitmap_cached: false,
-                is_visible: true,
-                amf_data: Some(vec![
+                is_bitmap_cached: None,
+                is_visible: None,
+                amf_data: Some(&[
                     10, 11, 1, 9, 116, 101, 115, 116, 6, 17, 84, 101, 115, 116, 105, 110, 103, 33,
                     1,
                 ]),
@@ -2124,8 +2372,11 @@ pub fn tag_tests() -> Vec<TagTestData> {
         ),
         (
             5, // Password supported in SWF version 5 or later.
-            Tag::Protect(Some("$1$d/$yMscKH17OJ0paJT.e67iz0".to_string())),
-            read_tag_bytes_from_file("tests/swfs/protect.swf", TagCode::Protect),
+            Tag::Protect(Some(
+                SwfStr::from_str_with_encoding("$1$d/$yMscKH17OJ0paJT.e67iz0", WINDOWS_1252)
+                    .unwrap(),
+            )),
+            read_tag_bytes_from_file("tests/swfs/Protect.swf", TagCode::Protect),
         ),
         (
             1,
@@ -2179,11 +2430,11 @@ pub fn tag_tests() -> Vec<TagTestData> {
             Tag::SymbolClass(vec![
                 SymbolClassLink {
                     id: 2,
-                    class_name: "foo.Test".to_string(),
+                    class_name: "foo.Test".into(),
                 },
                 SymbolClassLink {
                     id: 0,
-                    class_name: "DocumentTest".to_string(),
+                    class_name: "DocumentTest".into(),
                 },
             ]),
             read_tag_bytes_from_file("tests/swfs/SymbolClass.swf", TagCode::SymbolClass),
@@ -2205,7 +2456,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
         (
             9,
             Tag::StartSound2 {
-                class_name: "TestSound".to_string(),
+                class_name: "TestSound".into(),
                 sound_info: Box::new(SoundInfo {
                     event: SoundEvent::Event,
                     in_sample: None,
@@ -2225,7 +2476,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             Tag::VideoFrame(VideoFrame {
                 stream_id: 1,
                 frame_num: 0,
-                data: vec![0, 0, 132, 0, 4, 4, 17, 38, 190, 190, 190, 190, 201, 182],
+                data: &[0, 0, 132, 0, 4, 4, 17, 38, 190, 190, 190, 190, 201, 182],
             }),
             read_tag_bytes_from_file("tests/swfs/DefineVideoStream.swf", TagCode::VideoFrame),
         ),
@@ -2233,7 +2484,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             1,
             Tag::Unknown {
                 tag_code: 512,
-                data: vec![],
+                data: &[],
             },
             vec![0b00_000000, 0b10000000],
         ),
@@ -2241,7 +2492,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             1,
             Tag::Unknown {
                 tag_code: 513,
-                data: vec![1, 2],
+                data: &[1, 2],
             },
             vec![0b01_000010, 0b10000000, 1, 2],
         ),
@@ -2249,7 +2500,7 @@ pub fn tag_tests() -> Vec<TagTestData> {
             1,
             Tag::Unknown {
                 tag_code: 513,
-                data: vec![0; 64],
+                data: &[0; 64],
             },
             vec![
                 0b01_111111,
@@ -2324,6 +2575,73 @@ pub fn tag_tests() -> Vec<TagTestData> {
                 0,
             ],
         ),
+        (
+            8,
+            Tag::DefineShape(Shape {
+                version: 4,
+                id: 2,
+                shape_bounds: Rectangle {
+                    x_min: Twips::from_pixels(-20.0),
+                    x_max: Twips::from_pixels(220.0),
+                    y_min: Twips::from_pixels(-20.0),
+                    y_max: Twips::from_pixels(20.0),
+                },
+                edge_bounds: Rectangle {
+                    x_min: Twips::from_pixels(0.0),
+                    x_max: Twips::from_pixels(200.0),
+                    y_min: Twips::from_pixels(0.0),
+                    y_max: Twips::from_pixels(0.0),
+                },
+                has_fill_winding_rule: false,
+                has_non_scaling_strokes: false,
+                has_scaling_strokes: true,
+                styles: ShapeStyles {
+                    fill_styles: vec![],
+                    line_styles: vec![LineStyle {
+                        width: Twips::from_pixels(40.0),
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 0,
+                        },
+                        start_cap: LineCapStyle::Round,
+                        end_cap: LineCapStyle::Round,
+                        join_style: LineJoinStyle::Round,
+                        fill_style: Some(FillStyle::Bitmap {
+                            id: 1,
+                            matrix: Matrix {
+                                a: 20.0,
+                                d: 20.0,
+                                tx: Twips::from_pixels(10.0),
+                                ty: Twips::from_pixels(10.0),
+                                ..Default::default()
+                            },
+                            is_smoothed: false,
+                            is_repeating: true,
+                        }),
+                        allow_scale_x: true,
+                        allow_scale_y: true,
+                        is_pixel_hinted: false,
+                        allow_close: true,
+                    }],
+                },
+                shape: vec![
+                    ShapeRecord::StyleChange(StyleChangeData {
+                        move_to: None,
+                        fill_style_0: None,
+                        fill_style_1: None,
+                        line_style: Some(1),
+                        new_styles: None,
+                    }),
+                    ShapeRecord::StraightEdge {
+                        delta_x: Twips::from_pixels(200.0),
+                        delta_y: Twips::from_pixels(0.0),
+                    },
+                ],
+            }),
+            read_tag_bytes_from_file("tests/swfs/BitmapLineStyle.swf", TagCode::DefineShape4),
+        ),
     ]
 }
 
@@ -2339,8 +2657,8 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
         (
             3,
             Action::GetUrl {
-                url: String::from("a"),
-                target: String::from("b"),
+                url: SwfStr::from_str_with_encoding("a", WINDOWS_1252).unwrap(),
+                target: SwfStr::from_str_with_encoding("b", WINDOWS_1252).unwrap(),
             },
             vec![0x83, 4, 0, 97, 0, 98, 0],
         ),
@@ -2351,7 +2669,16 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
                 is_target_sprite: true,
                 is_load_vars: false,
             },
-            vec![0x9A, 1, 0, 0b10_0000_10],
+            vec![0x9A, 1, 0, 0b01_0000_10],
+        ),
+        (
+            4,
+            Action::GetUrl2 {
+                send_vars_method: SendVarsMethod::None,
+                is_target_sprite: true,
+                is_load_vars: false,
+            },
+            vec![0x9A, 1, 0, 0b01_0000_00],
         ),
         (4, Action::GetVariable, vec![0x1C]),
         (3, Action::GotoFrame(11), vec![0x81, 2, 0, 11, 0]),
@@ -2373,7 +2700,7 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
         ),
         (
             3,
-            Action::GotoLabel("testb".to_string()),
+            Action::GotoLabel(SwfStr::from_str_with_encoding("testb", WINDOWS_1252).unwrap()),
             vec![0x8C, 6, 0, 116, 101, 115, 116, 98, 0],
         ),
         (4, Action::If { offset: 1 }, vec![0x9D, 2, 0, 1, 0]),
@@ -2393,7 +2720,9 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
         (3, Action::PreviousFrame, vec![0x05]),
         (
             4,
-            Action::Push(vec![Value::Str("test".to_string())]),
+            Action::Push(vec![Value::Str(
+                SwfStr::from_str_with_encoding("test", WINDOWS_1252).unwrap(),
+            )]),
             vec![0x96, 6, 0, 0, 116, 101, 115, 116, 0],
         ),
         (
@@ -2456,7 +2785,7 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
         (4, Action::RandomNumber, vec![0x30]),
         (
             3,
-            Action::SetTarget("test".to_string()),
+            Action::SetTarget(SwfStr::from_str_with_encoding("test", WINDOWS_1252).unwrap()),
             vec![0x8B, 5, 0, 116, 101, 115, 116, 0],
         ),
         (4, Action::SetVariable, vec![0x1D]),
@@ -2490,7 +2819,7 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
             1,
             Action::Unknown {
                 opcode: 0x79,
-                data: vec![],
+                data: &[],
             },
             vec![0x79],
         ),
@@ -2498,9 +2827,31 @@ pub fn avm1_tests() -> Vec<Avm1TestData> {
             1,
             Action::Unknown {
                 opcode: 0xA0,
-                data: vec![2, 3],
+                data: &[2, 3],
             },
             vec![0xA0, 2, 0, 2, 3],
+        ),
+        (
+            5,
+            Action::DefineFunction {
+                name: SwfStr::from_str_with_encoding("cliche", WINDOWS_1252).unwrap(),
+                params: vec![
+                    SwfStr::from_str_with_encoding("greeting", WINDOWS_1252).unwrap(),
+                    SwfStr::from_str_with_encoding("name", WINDOWS_1252).unwrap(),
+                ],
+                actions: &[
+                    0x96, 0x0a, 0x00, 0x00, 0x67, 0x72, 0x65, 0x65, 0x74, 0x69, 0x6e, 0x67, 0x00,
+                    0x1c, 0x96, 0x03, 0x00, 0x00, 0x20, 0x00, 0x47, 0x96, 0x06, 0x00, 0x00, 0x6e,
+                    0x61, 0x6d, 0x65, 0x00, 0x1c, 0x47, 0x3e,
+                ],
+            },
+            vec![
+                0x9b, 0x19, 0x00, 0x63, 0x6c, 0x69, 0x63, 0x68, 0x65, 0x00, 0x02, 0x00, 0x67, 0x72,
+                0x65, 0x65, 0x74, 0x69, 0x6e, 0x67, 0x00, 0x6e, 0x61, 0x6d, 0x65, 0x00, 0x21, 0x00,
+                0x96, 0x0a, 0x00, 0x00, 0x67, 0x72, 0x65, 0x65, 0x74, 0x69, 0x6e, 0x67, 0x00, 0x1c,
+                0x96, 0x03, 0x00, 0x00, 0x20, 0x00, 0x47, 0x96, 0x06, 0x00, 0x00, 0x6e, 0x61, 0x6d,
+                0x65, 0x00, 0x1c, 0x47, 0x3e,
+            ],
         ),
     ]
 }
@@ -2582,21 +2933,7 @@ pub fn avm2_tests() -> Vec<Avm2TestData> {
                     num_locals: 1,
                     init_scope_depth: 1,
                     max_scope_depth: 2,
-                    code: vec![
-                        Op::GetLocal { index: 0 },
-                        Op::PushScope,
-                        Op::FindPropStrict {
-                            index: Index::new(3),
-                        },
-                        Op::PushString {
-                            value: Index::new(5),
-                        },
-                        Op::CallPropVoid {
-                            index: Index::new(3),
-                            num_args: 1,
-                        },
-                        Op::ReturnVoid,
-                    ],
+                    code: vec![208, 48, 93, 3, 44, 5, 79, 3, 1, 71],
                     exceptions: vec![],
                     traits: vec![],
                 },
@@ -2606,21 +2943,7 @@ pub fn avm2_tests() -> Vec<Avm2TestData> {
                     num_locals: 2,
                     init_scope_depth: 1,
                     max_scope_depth: 2,
-                    code: vec![
-                        Op::GetLocal { index: 0 },
-                        Op::PushScope,
-                        Op::FindPropStrict {
-                            index: Index::new(2),
-                        },
-                        Op::CallProperty {
-                            index: Index::new(2),
-                            num_args: 0,
-                        },
-                        Op::CoerceA,
-                        Op::SetLocal { index: 1 },
-                        Op::GetLocal { index: 1 },
-                        Op::ReturnValue,
-                    ],
+                    code: vec![208, 48, 93, 2, 70, 2, 0, 130, 213, 209, 72],
                     exceptions: vec![],
                     traits: vec![],
                 },
