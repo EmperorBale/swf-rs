@@ -42,3 +42,4 @@ pub use string::*;
 pub use tag_code::TagCode;
 pub use types::*;
 pub use write::write_swf;
+pub use avm1::opcode::*;
