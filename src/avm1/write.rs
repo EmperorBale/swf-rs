@@ -412,7 +412,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    fn write_push_value(&mut self, value: &Value) -> Result<()> {
+    pub fn write_push_value(&mut self, value: &Value) -> Result<()> {
         match *value {
             Value::Str(string) => {
                 self.write_u8(0)?;
